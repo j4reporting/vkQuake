@@ -40,9 +40,9 @@ RUN apt-get update \
 
 RUN cd /tmp \
  && wget https://github.com/libsdl-org/SDL/archive/refs/heads/release-2.30.x.tar.gz \
- && tar -xzf SDL2-2.30.x.tar.gz \
- && rm SDL2-2.30.x.tar.gz \
- && cd /tmp/SDL2-2.30.x \
+ && tar -xzf release-2.30.x.tar.gz \
+ && rm release-2.30.x.tar.gz \
+ && cd /tmp/SDL-release-2.30.x \
  && ./configure \
  && make -j \
  && make install
