@@ -23,7 +23,6 @@ RUN apt-get update \
 	libudev-dev \
 	libusb-dev \
 	libvorbis-dev \
-	libvorbis-dev \
 	libvulkan-dev \
 	libx11-xcb-dev \
 	libxcursor-dev \
@@ -39,10 +38,10 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 RUN cd /tmp \
- && wget https://github.com/libsdl-org/SDL/archive/refs/heads/release-2.30.x.tar.gz \
- && tar -xzf release-2.30.x.tar.gz \
- && rm release-2.30.x.tar.gz \
- && cd /tmp/SDL-release-2.30.x \
+ && wget https://www.libsdl.org/release/SDL2-2.30.6.tar.gz \
+ && tar -xzf SDL2-2.30.6.tar.gz \
+ && rm SDL2-2.30.6.tar.gz \
+ && cd /tmp/SDL2-2.30.6 \
  && ./configure \
  && make -j \
  && make install
