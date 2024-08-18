@@ -37,6 +37,7 @@ RUN apt-get update \
 	zlib1g-dev \
  	libwayland-dev \
   	libxkbcommon-dev \
+   	libdecor-0-dev \
  && rm -rf /var/lib/apt/lists/*
 
 RUN cd /tmp \
