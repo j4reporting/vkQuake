@@ -38,6 +38,7 @@ RUN apt-get update \
  	libwayland-dev \
   	libxkbcommon-dev \
    	libdecor-0-dev \
+    	libxi-dev \
  && rm -rf /var/lib/apt/lists/*
 
 RUN cd /tmp \
