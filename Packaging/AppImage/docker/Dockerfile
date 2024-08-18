@@ -36,6 +36,7 @@ RUN apt-get update \
 	vulkan-sdk \
 	zlib1g-dev \
  	libwayland-dev \
+  	libxkbcommon-dev \
  && rm -rf /var/lib/apt/lists/*
 
 RUN cd /tmp \
