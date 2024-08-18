@@ -35,6 +35,7 @@ RUN apt-get update \
 	libopusfile-dev \
 	vulkan-sdk \
 	zlib1g-dev \
+ 	libwayland-dev \
  && rm -rf /var/lib/apt/lists/*
 
 RUN cd /tmp \
