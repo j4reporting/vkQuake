@@ -26,6 +26,7 @@ RUN apt-get update \
 	libvulkan-dev \
 	libx11-xcb-dev \
 	libxcursor-dev \
+ 	libxkbcommon-dev \
 	libxrandr-dev \
 	libxt-dev \
 	libxv-dev \
