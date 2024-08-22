@@ -35,17 +35,13 @@ RUN apt-get update \
 	libopusfile-dev \
 	vulkan-sdk \
 	zlib1g-dev \
- 	libwayland-dev \
-  	libxkbcommon-dev \
-   	libdecor-0-dev \
-    	libxi-dev \
  && rm -rf /var/lib/apt/lists/*
 
 RUN cd /tmp \
- && wget https://www.libsdl.org/release/SDL2-2.30.6.tar.gz \
- && tar -xzf SDL2-2.30.6.tar.gz \
- && rm SDL2-2.30.6.tar.gz \
- && cd /tmp/SDL2-2.30.6 \
+ && wget https://github.com/libsdl-org/SDL/archive/7ca3d26e7aa0ff1f7ba48eee2f35ac5fb4de0057.tar.gz \
+ && tar -xzf 7ca3d26e7aa0ff1f7ba48eee2f35ac5fb4de0057.tar.gz \
+ && rm 7ca3d26e7aa0ff1f7ba48eee2f35ac5fb4de0057.tar.gz
+ && cd SDL-7ca3d26e7aa0ff1f7ba48eee2f35ac5fb4de0057 \
  && ./configure \
  && make -j \
  && make install
