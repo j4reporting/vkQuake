@@ -41,7 +41,7 @@ RUN apt-get update \
 RUN cd /tmp \
  && wget https://github.com/libsdl-org/SDL/archive/7ca3d26e7aa0ff1f7ba48eee2f35ac5fb4de0057.tar.gz \
  && tar -xzf 7ca3d26e7aa0ff1f7ba48eee2f35ac5fb4de0057.tar.gz \
- && rm 7ca3d26e7aa0ff1f7ba48eee2f35ac5fb4de0057.tar.gz
+ && rm 7ca3d26e7aa0ff1f7ba48eee2f35ac5fb4de0057.tar.gz \
  && cd SDL-7ca3d26e7aa0ff1f7ba48eee2f35ac5fb4de0057 \
  && ./configure \
  && make -j \
