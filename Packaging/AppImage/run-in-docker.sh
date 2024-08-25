@@ -1,6 +1,8 @@
 #!/bin/bash
 set -euo pipefail
 
+echo $PWD
+
 FOLDER=vkquake-${VERSION}_linux64
 ARCHIVE=$FOLDER.tar.gz
 
