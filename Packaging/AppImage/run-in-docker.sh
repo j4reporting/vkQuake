@@ -9,7 +9,7 @@ cd /usr/src/vkQuake
 rm -rf build/appimage
 
 python3 /opt/meson/meson.py build/appimage -Dbuildtype=release -Db_lto=true
-ninja -C build/appimage
+ninja -v -C build/appimage
 
 cd Packaging/AppImage
 rm -rf AppDir
