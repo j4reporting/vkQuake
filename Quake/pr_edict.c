@@ -61,41 +61,23 @@ angles and bad trails.
 */
 edict_t *ED_Alloc (void)
 {
-	edict_t *e = qcvm->free_edicts_head;
+	// get head of FIFO, if not empty
+	edict_t *e = (qcvm->free_list.size > 0) ? qcvm->free_list.circular_buffer[qcvm->free_list.head_index] : NULL;
 
-	if (e && ((e->freetime < 2) || (qcvm->time - e->freetime) > 0.5))
+	if (e && ((e->freetime < MAX_EDICT_FREETIME_ALWAYS_REUSE) || (qcvm->time - e->freetime) > MIN_EDICT_AGE_FOR_REUSE))
 	{
 		assert (e->free);
 		memset (&e->v, 0, qcvm->progs->entityfields * 4);
 		e->free = false;
 
-		if (e == qcvm->free_edicts_tail)
-		{
-			assert (e->next_free == NULL);
-			// we are in the special 1-element list case (see ED_AddToFreeList)
-			//  where qcvm->free_edicts_head = qcvm->free_edicts_tail
-			// so reset all to NULL to create an empty list.
-			qcvm->free_edicts_head = NULL;
-			qcvm->free_edicts_tail = NULL;
+		// pop HEAD
+		qcvm->free_list.head_index = (qcvm->free_list.head_index + 1) % MAX_EDICTS;
+		qcvm->free_list.size -= 1;
 
-			// non-free edicts have no link to the free-list whatsoever, so mark it as such
-			e->prev_free = NULL;
-			e->next_free = NULL;
-			return e;
-		}
-		else
-			assert (e->next_free);
+		// no real need, but easier for debugging...
+		if (qcvm->free_list.size == 0)
+			qcvm->free_list.head_index = 0;
 
-		// move the head to next :
-		qcvm->free_edicts_head = e->next_free;
-
-		// the new head has no predecessor
-		if (qcvm->free_edicts_head)
-			qcvm->free_edicts_head->prev_free = NULL;
-
-		// non-free edicts have no link to the free-list whatsoever, so mark it as such
-		e->prev_free = NULL;
-		e->next_free = NULL;
 		return e;
 	}
 
@@ -103,7 +85,17 @@ edict_t *ED_Alloc (void)
 		Host_Error ("ED_Alloc: no free edicts (max_edicts is %i)", qcvm->max_edicts);
 
 	e = EDICT_NUM (qcvm->num_edicts++);
+
+	// vso - 'new' free edicts are not necessarily clean after a load/fastload
+	// so completly reset their state from scratch in this case
+	// force clean slate to prevent problems
+	memset (e, 0, qcvm->edict_size);
+	e->free = false;
+
 	e->baseline = nullentitystate;
+
+	assert (!e->free);
+
 	return e;
 }
 
@@ -114,31 +106,11 @@ ED_AddToFreeList
 */
 static void ED_AddToFreeList (edict_t *ed)
 {
-	// empty list case:
-	if (qcvm->free_edicts_head == NULL)
-	{
-		assert (!qcvm->free_edicts_tail);
-		qcvm->free_edicts_head = ed;
-		qcvm->free_edicts_tail = ed;
-	}
-	// 1. element case :
-	else if (qcvm->free_edicts_head == qcvm->free_edicts_tail)
-	{
-		// We build a 2-element list such as
-		//  {qcvm->free_edicts_head; qcvm->free_edicts_tail}
-		qcvm->free_edicts_head->prev_free = NULL;
-		qcvm->free_edicts_head->next_free = ed;
-		ed->prev_free = qcvm->free_edicts_head;
-		qcvm->free_edicts_tail = ed;
-		qcvm->free_edicts_tail->next_free = NULL;
-	}
-	else // 2-element+ case:
-	{
-		ed->prev_free = qcvm->free_edicts_tail;
-		qcvm->free_edicts_tail->next_free = ed;
-		qcvm->free_edicts_tail = ed;
-		qcvm->free_edicts_tail->next_free = NULL;
-	}
+	assert ((int)qcvm->free_list.size < qcvm->num_edicts);
+
+	size_t add_index = (qcvm->free_list.head_index + qcvm->free_list.size) % MAX_EDICTS;
+	qcvm->free_list.circular_buffer[add_index] = ed;
+	qcvm->free_list.size += 1;
 }
 
 /*
@@ -176,6 +148,32 @@ void ED_Free (edict_t *ed)
 	ed->freetime = qcvm->time;
 
 	ED_AddToFreeList (ed);
+}
+
+/*
+=================
+ED_RemoveFromFreeList
+=================
+*/
+void ED_RemoveFromFreeList (edict_t *ed)
+{
+	if (ed->free)
+	{
+		// find the index where ed is...
+		for (size_t i = 0; i < qcvm->free_list.size; i++)
+		{
+			const size_t found_index = (qcvm->free_list.head_index + i) % MAX_EDICTS;
+
+			if (qcvm->free_list.circular_buffer[found_index] == ed)
+			{
+				// overwrite found_index with head data, advance head.
+				qcvm->free_list.circular_buffer[found_index] = qcvm->free_list.circular_buffer[qcvm->free_list.head_index];
+				qcvm->free_list.head_index = (qcvm->free_list.head_index + 1) % MAX_EDICTS;
+				qcvm->free_list.size -= 1;
+				break;
+			}
+		}
+	}
 }
 
 static int ED_freetime_compare_func (const void *first, const void *second)
@@ -217,28 +215,12 @@ void ED_RebuildFreeList (bool force_free_reuse)
 	}
 
 	// 3. Reset freelist and insert by free_edicts_table order
-	qcvm->free_edicts_head = NULL;
-	qcvm->free_edicts_tail = NULL;
+	memset (&(qcvm->free_list), 0x0, sizeof (freelist_t));
 
 	for (int j = 0; j < nb_free_edicts; j++)
 	{
 		ED_AddToFreeList (EDICT_NUM (free_edicts_table[j]));
 	}
-
-#if 0
-	//DEBUG
-	edict_t *e = qcvm->free_edicts_head;
-
-	while (e)
-	{
-		ED_Print (e);
-
-		if (e == qcvm->free_edicts_tail)
-			break;
-		// goto next
-		e = e->next_free;
-	}
-#endif
 
 	Mem_Free (free_edicts_table);
 }
@@ -274,7 +256,7 @@ static ddef_t *ED_FieldAtOfs (int ofs)
 	ddef_t *def;
 	int		i;
 
-	for (i = 0; i < qcvm->progs->numfielddefs; i++)
+	for (i = 1; i < qcvm->progs->numfielddefs; i++)
 	{
 		def = &qcvm->fielddefs[i];
 		if (def->ofs == ofs)
@@ -861,6 +843,9 @@ void ED_Write (FILE *f, edict_t *ed)
 		if (type & DEF_SAVEGLOBAL)
 			continue;
 
+		if (type >= NUM_TYPE_SIZES)
+			continue;
+
 		name = PR_GetString (d->s_name);
 		j = strlen (name);
 		if (j > 1 && name[j - 2] == '_')
@@ -923,17 +908,16 @@ void ED_PrintEdicts (void)
 
 	Con_Printf ("\nFree-list:\n");
 
-	edict_t *e = qcvm->free_edicts_head;
+	size_t current_index = qcvm->free_list.head_index;
 
-	while (e)
+	for (size_t j = 0; j < qcvm->free_list.size; j++)
 	{
+		edict_t *e = qcvm->free_list.circular_buffer[current_index];
+
 		ED_Print (e);
 		free_list_count++;
 
-		if (e == qcvm->free_edicts_tail)
-			break;
-		// goto next
-		e = e->next_free;
+		current_index = (current_index + 1) % MAX_EDICTS;
 	}
 
 	assert (free_list_count == free_edicts_count);
@@ -991,13 +975,13 @@ For debugging
 static void ED_Count (void)
 {
 	edict_t *ent;
-	int		 i, active, models, solid, step, free_edicts;
+	int		 i, active, models, solid, step, push, none, noclip, free_edicts;
 
 	if (!sv.active)
 		return;
 
 	PR_SwitchQCVM (&sv.qcvm);
-	active = models = solid = step = free_edicts = 0;
+	active = models = solid = step = push = none = noclip = free_edicts = 0;
 	for (i = 0; i < qcvm->num_edicts; i++)
 	{
 		ent = EDICT_NUM (i);
@@ -1012,16 +996,27 @@ static void ED_Count (void)
 			solid++;
 		if (ent->v.model)
 			models++;
+
 		if (ent->v.movetype == MOVETYPE_STEP)
 			step++;
+		if (ent->v.movetype == MOVETYPE_PUSH)
+			push++;
+		if (ent->v.movetype == MOVETYPE_NONE)
+			none++;
+		if (ent->v.movetype == MOVETYPE_NOCLIP)
+			noclip++;
 	}
 
-	Con_Printf ("num_edicts: %5i\n", qcvm->num_edicts);
-	Con_Printf ("active    : %5i\n", active);
-	Con_Printf ("free      : %5i\n", free_edicts);
-	Con_Printf ("view      : %5i\n", models);
-	Con_Printf ("touch     : %5i\n", solid);
-	Con_Printf ("step      : %5i\n", step);
+	Con_Printf ("num_edicts : %5i\n", qcvm->num_edicts);
+	Con_Printf ("active     : %5i\n", active);
+	Con_Printf ("free       : %5i\n", free_edicts);
+	Con_Printf ("view       : %5i\n", models);
+	Con_Printf ("touch      : %5i\n", solid);
+	Con_Printf ("------------------\n");
+	Con_Printf ("move step  : %5i\n", step);
+	Con_Printf ("move push  : %5i\n", push);
+	Con_Printf ("move none  : %5i\n", none);
+	Con_Printf ("move noclip: %5i\n", noclip);
 	PR_SwitchQCVM (NULL);
 }
 
@@ -1483,20 +1478,28 @@ void ED_LoadFromFile (const char *data)
 			continue;
 		}
 
+		const char *classname = PR_GetString (ent->v.classname);
+
+		if (sv.nomonsters && !strncmp (classname, "monster_", 8))
+		{
+			ED_Free (ent);
+			inhibit++;
+			continue;
+		}
+
 		// look for the spawn function
 		//
-		func = ED_FindFunction (va ("spawnfunc_%s", PR_GetString (ent->v.classname)));
+		func = ED_FindFunction (va ("spawnfunc_%s", classname));
 		if (func)
 		{
 			if (!usingspawnfunc++)
 				Con_DPrintf2 ("Using DP_SV_SPAWNFUNC_PREFIX\n");
 		}
 		else
-			func = ED_FindFunction (PR_GetString (ent->v.classname));
+			func = ED_FindFunction (classname);
 
 		if (!func)
 		{
-			const char *classname = PR_GetString (ent->v.classname);
 			if (!strcmp (classname, "misc_model"))
 				PR_spawnfunc_misc_model (ent);
 			else
@@ -1899,6 +1902,17 @@ qboolean PR_LoadProgs (const char *filename, qboolean fatal, unsigned int needcr
 
 /*
 ===============
+ED_Nomonsters_f
+===============
+*/
+static void ED_Nomonsters_f (cvar_t *cvar)
+{
+	if (cvar->value)
+		Con_Warning ("\"%s\" can break gameplay.\n", cvar->name);
+}
+
+/*
+===============
 PR_Init
 ===============
 */
@@ -1910,6 +1924,7 @@ void PR_Init (void)
 	Cmd_AddCommand ("profile", PR_Profile_f);
 	Cmd_AddCommand ("pr_dumpplatform", PR_DumpPlatform_f);
 	Cvar_RegisterVariable (&nomonsters);
+	Cvar_SetCallback (&nomonsters, ED_Nomonsters_f);
 	Cvar_RegisterVariable (&gamecfg);
 	Cvar_RegisterVariable (&scratch1);
 	Cvar_RegisterVariable (&scratch2);

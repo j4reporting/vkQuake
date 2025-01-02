@@ -34,6 +34,7 @@ static qmodel_t *Mod_LoadModel (qmodel_t *mod, qboolean crash);
 
 cvar_t external_ents = {"external_ents", "1", CVAR_ARCHIVE};
 cvar_t external_vis = {"external_vis", "1", CVAR_ARCHIVE};
+cvar_t external_textures = {"external_textures", "1", CVAR_ARCHIVE};
 cvar_t r_loadmd5models = {"r_loadmd5models", "1", CVAR_ARCHIVE};
 cvar_t r_md5models = {"r_md5models", "1", CVAR_ARCHIVE};
 
@@ -106,6 +107,7 @@ void Mod_Init (void)
 {
 	Cvar_RegisterVariable (&external_vis);
 	Cvar_RegisterVariable (&external_ents);
+	Cvar_RegisterVariable (&external_textures);
 	Cvar_RegisterVariable (&r_loadmd5models);
 	Cvar_RegisterVariable (&r_md5models);
 	Cvar_SetCallback (&r_md5models, Mod_RefreshSkins_f);
@@ -608,6 +610,147 @@ qmodel_t *Mod_ForName (const char *name, qboolean crash)
 */
 
 /*
+=============
+Mod_LoadWadFiles
+
+load all of the wads listed in the worldspawn "wad" field
+=============
+*/
+static wad_t *Mod_LoadWadFiles (qmodel_t *mod)
+{
+	char		key[128], value[4096];
+	const char *data;
+
+	if (!external_textures.value)
+		return NULL;
+
+	// disregard if this isn't the world model
+	if (strcmp (mod->name, sv.modelname))
+		return NULL;
+
+	data = COM_Parse (mod->entities);
+	if (!data)
+		return NULL; // error
+	if (com_token[0] != '{')
+		return NULL; // error
+	while (1)
+	{
+		data = COM_Parse (data);
+		if (!data)
+			return NULL; // error
+		if (com_token[0] == '}')
+			break; // end of worldspawn
+		if (com_token[0] == '_')
+			q_strlcpy (key, com_token + 1, sizeof (key));
+		else
+			q_strlcpy (key, com_token, sizeof (key));
+		while (key[0] && key[strlen (key) - 1] == ' ') // remove trailing spaces
+			key[strlen (key) - 1] = 0;
+		data = COM_ParseEx (data, CPE_ALLOWTRUNC);
+		if (!data)
+			return NULL; // error
+		q_strlcpy (value, com_token, sizeof (value));
+
+		if (!strcmp ("wad", key))
+		{
+			return W_LoadWadList (value);
+		}
+	}
+	return NULL;
+}
+
+/*
+=================
+Mod_LoadWadTexture
+
+look for an external texture in any of the loaded map wads
+=================
+*/
+static texture_t *Mod_LoadWadTexture (qmodel_t *mod, wad_t *wads, const char *name)
+{
+	int			   i, pixels;
+	lumpinfo_t	  *info;
+	wad_t		  *wad;
+	miptex_t	   mt;
+	texture_t	  *tx;
+	qboolean	   pal;
+	unsigned short colors;
+
+	// look for the lump in any of the loaded wads
+	info = W_GetLumpinfoList (wads, name, &wad);
+
+	// ensure we're dealing with a miptex
+	if (!info || (info->type != TYP_MIPTEX && (wad->id != WADID_VALVE || info->type != TYP_MIPTEX_PALETTE)))
+	{
+		Con_Warning ("Missing texture %s in %s!\n", name, mod->name);
+		return NULL;
+	}
+
+	// override the texture from the bsp file
+	FS_fseek (&wad->fh, info->filepos, SEEK_SET);
+	FS_fread (&mt, 1, sizeof (miptex_t), &wad->fh);
+
+	mt.width = LittleLong (mt.width);
+	mt.height = LittleLong (mt.height);
+	for (i = 0; i < MIPLEVELS; i++)
+		mt.offsets[i] = LittleLong (mt.offsets[i]);
+
+	if (mt.width == 0 || mt.height == 0)
+	{
+		Con_Warning ("Zero sized texture %s in %s!\n", mt.name, wad->name);
+		return NULL;
+	}
+
+	pal = wad->id == WADID_VALVE && info->type == TYP_MIPTEX_PALETTE;
+
+	pixels = mt.width * mt.height / 64 * 85;
+	// valve textures have a color palette immediately following the pixels
+	if (pal)
+	{
+		if ((pixels + 2) <= info->size)
+		{
+			// the palette is basically garunteed to be 256 colors but,
+			// we might as well use the value since it *does* exist
+			FS_fseek (&wad->fh, info->filepos + pixels, SEEK_SET);
+			FS_fread (&colors, 1, 2, &wad->fh);
+			colors = LittleShort (colors);
+			// add space for the color palette
+			pixels += colors * 3;
+		}
+		// add space for the color count
+		pixels += 2;
+	}
+	tx = (texture_t *)Mem_Alloc (sizeof (texture_t) + pixels);
+
+	memcpy (tx->name, mt.name, sizeof (tx->name));
+	tx->width = mt.width;
+	tx->height = mt.height;
+	for (i = 0; i < MIPLEVELS; i++)
+		tx->offsets[i] = mt.offsets[i] + sizeof (texture_t) - sizeof (miptex_t);
+	// the pixels immediately follow the structures
+
+	// check for pixels extending past the end of the lump
+	if (pixels > info->size)
+	{
+		Con_DPrintf ("Texture %s extends past end of lump\n", mt.name);
+		pixels = info->size;
+	}
+	tx->source_file[0] = 0;
+	tx->source_offset = (src_offset_t)(tx + 1);
+
+	Atomic_StoreUInt32 (&tx->update_warp, false); // johnfitz
+	tx->warpimage = NULL;						  // johnfitz
+	tx->fullbright = NULL;						  // johnfitz
+	tx->shift = 0;								  // Q64 only
+	tx->palette = pal;
+
+	FS_fseek (&wad->fh, info->filepos + sizeof (miptex_t), SEEK_SET);
+	FS_fread (tx + 1, 1, pixels, &wad->fh);
+
+	return tx;
+}
+
+/*
 =================
 Mod_CheckFullbrights -- johnfitz
 =================
@@ -618,6 +761,18 @@ qboolean Mod_CheckFullbrights (byte *pixels, int count)
 	for (i = 0; i < count; i++)
 		if (*pixels++ > 223)
 			return true;
+	return false;
+}
+
+/*
+=================
+Mod_CheckFullbrightsValve
+=================
+*/
+static qboolean Mod_CheckFullbrightsValve (char *name, byte *pixels, int count)
+{
+	if (name[0] == '~' || (name[2] == '~' && name[0] == '+'))
+		return Mod_CheckFullbrights (pixels, count);
 	return false;
 }
 
@@ -658,15 +813,20 @@ static void Mod_LoadTextureTask (int i, qmodel_t **ppmod)
 	int	  fwidth, fheight;
 	char  filename[MAX_OSPATH], mapname[MAX_OSPATH];
 	byte *data = NULL;
+	bool  fbright;
 
+#ifdef BSP29_VALVE
+	if (mod->bspversion != BSPVERSION_VALVE && !q_strncasecmp (tx->name, "sky", 3))
+#else
 	if (!q_strncasecmp (tx->name, "sky", 3)) // sky texture //also note -- was strncmp, changed to match qbsp
+#endif
 	{
 		if (mod->bspversion == BSPVERSION_QUAKE64)
 			Sky_LoadTextureQ64 (mod, tx, i);
 		else
 			Sky_LoadTexture (mod, tx, i);
 	}
-	else if (tx->name[0] == '*') // warping texture
+	else if (tx->name[0] == '*' || tx->name[0] == '!') // warping texture
 	{
 		// external textures -- first look in "textures/mapname/" then look in "textures/"
 		COM_StripExtension (mod->name + 5, mapname, sizeof (mapname));
@@ -688,8 +848,10 @@ static void Mod_LoadTextureTask (int i, qmodel_t **ppmod)
 		else // use the texture from the bsp file
 		{
 			q_snprintf (texturename, sizeof (texturename), "%s:%s", mod->name, tx->name);
-			tx->gltexture =
-				TexMgr_LoadImage (mod, texturename, tx->width, tx->height, SRC_INDEXED, (byte *)(tx + 1), mod->name, tx->source_offset, TEXPREF_NONE);
+			fmt = SRC_INDEXED;
+			if (tx->palette)
+				fmt = SRC_INDEXED_PALETTE;
+			tx->gltexture = TexMgr_LoadImage (mod, texturename, tx->width, tx->height, fmt, (byte *)(tx + 1), tx->source_file, tx->source_offset, TEXPREF_NONE);
 		}
 
 		// now create the warpimage, using dummy data from the hunk to create the initial image
@@ -741,20 +903,30 @@ static void Mod_LoadTextureTask (int i, qmodel_t **ppmod)
 		else // use the texture from the bsp file
 		{
 			q_snprintf (texturename, sizeof (texturename), "%s:%s", mod->name, tx->name);
-			if (Mod_CheckFullbrights ((byte *)(tx + 1), pixels))
+			if (tx->palette)
+			{
+				fmt = SRC_INDEXED_PALETTE;
+				fbright = Mod_CheckFullbrightsValve (tx->name, (byte *)(tx + 1), pixels);
+			}
+			else
+			{
+				fmt = SRC_INDEXED;
+				fbright = Mod_CheckFullbrights ((byte *)(tx + 1), pixels);
+			}
+			if (fbright)
 			{
 				tx->gltexture = TexMgr_LoadImage (
-					mod, texturename, tx->width, tx->height, SRC_INDEXED, (byte *)(tx + 1), mod->name, tx->source_offset,
+					mod, texturename, tx->width, tx->height, fmt, (byte *)(tx + 1), tx->source_file, tx->source_offset,
 					TEXPREF_MIPMAP | TEXPREF_NOBRIGHT | extraflags);
 				q_snprintf (texturename, sizeof (texturename), "%s:%s_glow", mod->name, tx->name);
 				tx->fullbright = TexMgr_LoadImage (
-					mod, texturename, tx->width, tx->height, SRC_INDEXED, (byte *)(tx + 1), mod->name, tx->source_offset,
+					mod, texturename, tx->width, tx->height, fmt, (byte *)(tx + 1), tx->source_file, tx->source_offset,
 					TEXPREF_MIPMAP | TEXPREF_FULLBRIGHT | extraflags);
 			}
 			else
 			{
 				tx->gltexture = TexMgr_LoadImage (
-					mod, texturename, tx->width, tx->height, SRC_INDEXED, (byte *)(tx + 1), mod->name, tx->source_offset, TEXPREF_MIPMAP | extraflags);
+					mod, texturename, tx->width, tx->height, fmt, (byte *)(tx + 1), tx->source_file, tx->source_offset, TEXPREF_MIPMAP | extraflags);
 			}
 		}
 	}
@@ -777,6 +949,11 @@ static void Mod_LoadTextures (qmodel_t *mod, byte *mod_base, lump_t *l)
 	byte	  *pixels_p;
 	int		   nummiptex;
 	int		   dataofs;
+	wad_t	  *wads;
+#ifdef BSP29_VALVE
+	qboolean	   pal;
+	unsigned short colors;
+#endif
 
 	// johnfitz -- don't return early if no textures; still need to create dummy texture
 	if (!l->filelen)
@@ -795,6 +972,13 @@ static void Mod_LoadTextures (qmodel_t *mod, byte *mod_base, lump_t *l)
 	mod->numtextures = nummiptex + 2; // johnfitz -- need 2 dummy texture chains for missing textures
 	mod->textures = (texture_t **)Mem_Alloc (mod->numtextures * sizeof (*mod->textures));
 
+	// load any wads this map may need to load external textures from
+	wads = Mod_LoadWadFiles (mod);
+
+#ifdef BSP29_VALVE
+	pal = mod->bspversion == BSPVERSION_VALVE;
+#endif
+
 	for (i = 0; i < nummiptex; i++)
 	{
 		dataofs = ReadLongUnaligned (m + offsetof (dmiptexlump_t, dataofs[i]));
@@ -812,7 +996,32 @@ static void Mod_LoadTextures (qmodel_t *mod, byte *mod_base, lump_t *l)
 			continue;
 		}
 
+		// an offset of zero indicates an external texture
+		if (mt.offsets[0] == 0)
+		{
+			mod->textures[i] = Mod_LoadWadTexture (mod, wads, mt.name);
+			continue;
+		}
+
 		pixels = mt.width * mt.height / 64 * 85;
+		pixels_p = m + dataofs + sizeof (miptex_t);
+#ifdef BSP29_VALVE
+		// valve textures have a color palette immediately following the pixels
+		if (pal)
+		{
+			if ((pixels_p + pixels + 2) <= (mod_base + l->fileofs + l->filelen))
+			{
+				// the palette is basically garunteed to be 256 colors but,
+				// we might as well use the value since it *does* exist
+				memcpy (&colors, pixels_p + pixels, 2);
+				colors = LittleShort (colors);
+				// add space for the color palette
+				pixels += colors * 3;
+			}
+			// add space for the color count
+			pixels += 2;
+		}
+#endif
 		tx = (texture_t *)Mem_Alloc (sizeof (texture_t) + pixels);
 		mod->textures[i] = tx;
 
@@ -827,18 +1036,23 @@ static void Mod_LoadTextures (qmodel_t *mod, byte *mod_base, lump_t *l)
 		// appears in the wild; e.g. jam2_tronyn.bsp (func_mapjam2),
 		// kellbase1.bsp (quoth), and can lead to a segfault if we read past
 		// the end of the .bsp file buffer
-		pixels_p = m + dataofs + sizeof (miptex_t);
 		if ((pixels_p + pixels) > (mod_base + l->fileofs + l->filelen))
 		{
 			Con_DPrintf ("Texture %s extends past end of lump\n", mt.name);
 			pixels = q_max (0, (mod_base + l->fileofs + l->filelen) - pixels_p);
 		}
-		tx->source_offset = (src_offset_t)(pixels_p) - (src_offset_t)mod_base;
+		q_strlcpy (tx->source_file, mod->name, sizeof (tx->source_file));
+		tx->source_offset = (src_offset_t)pixels_p - (src_offset_t)mod_base;
 
 		Atomic_StoreUInt32 (&tx->update_warp, false); // johnfitz
 		tx->warpimage = NULL;						  // johnfitz
 		tx->fullbright = NULL;						  // johnfitz
 		tx->shift = 0;								  // Q64 only
+#ifdef BSP29_VALVE
+		tx->palette = pal;
+#else
+		tx->palette = false;
+#endif
 
 		if (mod->bspversion != BSPVERSION_QUAKE64)
 		{
@@ -850,6 +1064,9 @@ static void Mod_LoadTextures (qmodel_t *mod, byte *mod_base, lump_t *l)
 			memcpy (tx + 1, m + dataofs + sizeof (miptex64_t), pixels);
 		}
 	}
+
+	// we no longer need the wads after this point
+	W_FreeWadList (wads);
 
 	if (!isDedicated)
 	{
@@ -1045,6 +1262,16 @@ static void Mod_LoadLighting (qmodel_t *mod, byte *mod_base, lump_t *l)
 		}
 		return;
 	}
+
+#ifdef BSP29_VALVE
+	if (mod->bspversion == BSPVERSION_VALVE)
+	{
+		// lightmap samples are already stored as rgb
+		mod->lightdata = (byte *)Mem_Alloc (l->filelen);
+		memcpy (mod->lightdata, mod_base + l->fileofs, l->filelen);
+		return;
+	}
+#endif
 
 	mod->lightdata = (byte *)Mem_Alloc (l->filelen * 3);
 	in = mod->lightdata + l->filelen * 2; // place the file at the end, so it will not be overwritten until the very last write
@@ -1500,6 +1727,10 @@ static void Mod_LoadFaces (qmodel_t *mod, byte *mod_base, lump_t *l, qboolean bs
 
 		if (lofs == -1)
 			out->samples = NULL;
+#ifdef BSP29_VALVE
+		else if (mod->bspversion == BSPVERSION_VALVE)
+			out->samples = mod->lightdata + lofs; // accounts for RGB light data
+#endif
 		else
 			out->samples = mod->lightdata + (lofs * 3); // johnfitz -- lit support via lordhavoc (was "+ i")
 
@@ -1510,7 +1741,7 @@ static void Mod_LoadFaces (qmodel_t *mod, byte *mod_base, lump_t *l, qboolean bs
 			out->flags |= (SURF_DRAWSKY | SURF_DRAWTILED);
 			Mod_PolyForUnlitSurface (mod, out); // no more subdivision
 		}
-		else if (out->texinfo->texture->name[0] == '*') // warp surface
+		else if (out->texinfo->texture->name[0] == '*' || out->texinfo->texture->name[0] == '!') // warp surface
 		{
 			out->flags |= SURF_DRAWTURB;
 
@@ -2625,6 +2856,11 @@ static void Mod_LoadBrushModel (qmodel_t *mod, const char *loadname, void *buffe
 	case BSPVERSION:
 		bsp2 = false;
 		break;
+#ifdef BSP29_VALVE
+	case BSPVERSION_VALVE:
+		bsp2 = false;
+		break;
+#endif
 	case BSP2VERSION_2PSB:
 		bsp2 = 1; // first iteration
 		break;
@@ -2650,6 +2886,7 @@ static void Mod_LoadBrushModel (qmodel_t *mod, const char *loadname, void *buffe
 	Mod_LoadVertexes (mod, mod_base, &header->lumps[LUMP_VERTEXES]);
 	Mod_LoadEdges (mod, mod_base, &header->lumps[LUMP_EDGES], bsp2);
 	Mod_LoadSurfedges (mod, mod_base, &header->lumps[LUMP_SURFEDGES]);
+	Mod_LoadEntities (mod, mod_base, &header->lumps[LUMP_ENTITIES]);
 	Mod_LoadTextures (mod, mod_base, &header->lumps[LUMP_TEXTURES]);
 	Mod_LoadLighting (mod, mod_base, &header->lumps[LUMP_LIGHTING]);
 	Mod_LoadPlanes (mod, mod_base, &header->lumps[LUMP_PLANES]);
@@ -2686,7 +2923,6 @@ static void Mod_LoadBrushModel (qmodel_t *mod, const char *loadname, void *buffe
 visdone:
 	Mod_LoadNodes (mod, mod_base, &header->lumps[LUMP_NODES], bsp2);
 	Mod_LoadClipnodes (mod, mod_base, &header->lumps[LUMP_CLIPNODES], bsp2);
-	Mod_LoadEntities (mod, mod_base, &header->lumps[LUMP_ENTITIES]);
 	Mod_LoadSubmodels (mod, mod_base, &header->lumps[LUMP_MODELS]);
 
 	Mod_MakeHull0 (mod);
@@ -2705,13 +2941,15 @@ ALIAS MODELS
 ==============================================================================
 */
 
-stvert_t	stverts[MAXALIASVERTS];
-mtriangle_t triangles[MAXALIASTRIS];
+stvert_t stverts[MAXALIASVERTS];
+
+mtriangle_t	 *triangles = NULL;
+static size_t triangles_size = 0;
 
 // a pose is a single set of vertexes.  a frame may be
 // an animating sequence of poses
 trivertx_t *poseverts[MAXALIASFRAMES];
-int			posenum;
+static int	posenum;
 
 /*
 =================
@@ -3193,6 +3431,19 @@ void Mod_SetExtraFlags (qmodel_t *mod)
 #endif
 }
 
+static void check_tris_size (size_t numtris)
+{
+	// 1. assure that numtris < trinagles_size, else realloc
+	if (numtris > triangles_size)
+	{
+		size_t new_trinagles_size = q_max (triangles_size * 2, numtris);
+
+		triangles = Mem_Realloc (triangles, new_trinagles_size * sizeof (mtriangle_t));
+
+		triangles_size = new_trinagles_size;
+	}
+}
+
 /*
 =================
 Mod_LoadAliasModel
@@ -3242,13 +3493,18 @@ static void Mod_LoadAliasModel (qmodel_t *mod, void *buffer)
 	if (pheader->numverts > MAXALIASVERTS)
 		Sys_Error ("model %s has too many vertices (%d; max = %d)", mod->name, pheader->numverts, MAXALIASVERTS);
 
+	if (pheader->numverts > MAXALIASVERTS_QS)
+		Con_DWarning ("model %s vertex count of %d exceeds QS limit of %d\n", mod->name, pheader->numverts, MAXALIASVERTS_QS);
+
 	pheader->numtris = ReadLongUnaligned (mod_base + offsetof (mdl_t, numtris));
 
 	if (pheader->numtris <= 0)
 		Sys_Error ("model %s has no triangles", mod->name);
 
-	if (pheader->numtris > MAXALIASTRIS)
-		Sys_Error ("model %s has too many triangles (%d; max = %d)", mod->name, pheader->numtris, MAXALIASTRIS);
+	if (pheader->numtris > MAXALIASTRIS_QS)
+		Con_DWarning ("model %s triangle count of %d exceeds QS limit of %d\n", mod->name, pheader->numtris, MAXALIASTRIS_QS);
+
+	check_tris_size (pheader->numtris);
 
 	pheader->numframes = ReadLongUnaligned (mod_base + offsetof (mdl_t, numframes));
 	numframes = pheader->numframes;
@@ -3472,7 +3728,6 @@ static void Mod_LoadSpriteModel (qmodel_t *mod, void *buffer)
 	psprite->type = LittleLong (pin->type);
 	psprite->maxwidth = LittleLong (pin->width);
 	psprite->maxheight = LittleLong (pin->height);
-	psprite->beamlength = LittleFloat (pin->beamlength);
 	mod->synctype = (synctype_t)LittleLong (pin->synctype);
 	psprite->numframes = numframes;
 
@@ -3573,7 +3828,7 @@ MD5_ParseUInt
 */
 static size_t MD5_ParseUInt (const void **buffer)
 {
-	size_t i = SDL_strtoull (com_token, NULL, 0);
+	size_t i = strtoull (com_token, NULL, 0);
 	*buffer = COM_Parse (*buffer);
 	return i;
 }
@@ -3585,7 +3840,7 @@ MD5_ParseSInt
 */
 static long MD5_ParseSInt (const void **buffer)
 {
-	long i = SDL_strtol (com_token, NULL, 0);
+	long i = strtol (com_token, NULL, 0);
 	*buffer = COM_Parse (*buffer);
 	return i;
 }
@@ -3597,7 +3852,7 @@ MD5_ParseFloat
 */
 static double MD5_ParseFloat (const void **buffer)
 {
-	double i = SDL_strtod (com_token, NULL);
+	double i = strtod (com_token, NULL);
 	*buffer = COM_Parse (*buffer);
 	return i;
 }
@@ -3613,6 +3868,7 @@ static double MD5_ParseFloat (const void **buffer)
 #define MD5SINT()	MD5_ParseSInt (&buffer)
 #define MD5FLOAT()	MD5_ParseFloat (&buffer)
 #define MD5CHECK(s) MD5_ParseCheck (s, &buffer)
+#define MD5IGNORE() buffer = COM_Parse (buffer)
 
 /*
 ================
@@ -4007,15 +4263,15 @@ static void MD5Anim_Load (md5animctx_t *ctx, jointinfo_t *joints, size_t numjoin
 	MD5EXPECT ("{");
 	while (MD5CHECK ("("))
 	{
-		(void)MD5FLOAT ();
-		(void)MD5FLOAT ();
-		(void)MD5FLOAT ();
+		MD5IGNORE ();
+		MD5IGNORE ();
+		MD5IGNORE ();
 		MD5EXPECT (")");
 
 		MD5EXPECT ("(");
-		(void)MD5FLOAT ();
-		(void)MD5FLOAT ();
-		(void)MD5FLOAT ();
+		MD5IGNORE ();
+		MD5IGNORE ();
+		MD5IGNORE ();
 		MD5EXPECT (")");
 	}
 	MD5EXPECT ("}");
@@ -4024,15 +4280,15 @@ static void MD5Anim_Load (md5animctx_t *ctx, jointinfo_t *joints, size_t numjoin
 	MD5EXPECT ("{");
 	while (MD5CHECK ("("))
 	{
-		(void)MD5FLOAT ();
-		(void)MD5FLOAT ();
-		(void)MD5FLOAT ();
+		MD5IGNORE ();
+		MD5IGNORE ();
+		MD5IGNORE ();
 		MD5EXPECT (")");
 
 		MD5EXPECT ("(");
-		(void)MD5FLOAT ();
-		(void)MD5FLOAT ();
-		(void)MD5FLOAT ();
+		MD5IGNORE ();
+		MD5IGNORE ();
+		MD5IGNORE ();
 		MD5EXPECT (")");
 	}
 	MD5EXPECT ("}");
@@ -4096,8 +4352,8 @@ static void Mod_LoadMD5MeshModel (qmodel_t *mod, const void *buffer)
 	size_t			 numjoints, j;
 	size_t			 nummeshes, m;
 	char			 texname[MAX_QPATH];
-	md5vertinfo_t	*vinfo;
-	md5weightinfo_t *weight;
+	md5vertinfo_t	*vinfo = NULL;
+	md5weightinfo_t *weight = NULL;
 	size_t			 numweights;
 
 	md5animctx_t anim = {NULL};
@@ -4125,7 +4381,7 @@ static void Mod_LoadMD5MeshModel (qmodel_t *mod, const void *buffer)
 
 	hdrsize = sizeof (*outhdr) - sizeof (outhdr->frames);
 	hdrsize += sizeof (outhdr->frames) * anim.numposes;
-	outhdr = Mem_Alloc (hdrsize * numjoints);
+	outhdr = (aliashdr_t *)Mem_Alloc (hdrsize * numjoints);
 	TEMP_ALLOC_ZEROED (jointinfo_t, joint_infos, numjoints);
 	TEMP_ALLOC_ZEROED (jointpose_t, joint_poses, numjoints);
 
@@ -4166,6 +4422,11 @@ static void Mod_LoadMD5MeshModel (qmodel_t *mod, const void *buffer)
 
 	int index_offset = 0;
 	int vertex_offset = 0;
+	int weight_offset = 0;
+
+	size_t total_numverts = 0;
+	size_t total_numweights = 0;
+
 	for (m = 0; m < nummeshes; m++)
 	{
 		MD5EXPECT ("mesh");
@@ -4214,7 +4475,13 @@ static void Mod_LoadMD5MeshModel (qmodel_t *mod, const void *buffer)
 				{
 					surf->gltextures[surf->numskins][f] =
 						TexMgr_LoadImage (mod, texname, fwidth, fheight, fmt, data, texname, 0, TEXPREF_ALPHA | TEXPREF_NOBRIGHT | TEXPREF_MIPMAP);
+
+					// no fullbrights by default.
 					surf->fbtextures[surf->numskins][f] = NULL;
+					// initialize skinsizes, known at this point.
+					surf->skinwidth = surf->gltextures[0][0] ? surf->gltextures[0][0]->width : 1;
+					surf->skinheight = surf->gltextures[0][0] ? surf->gltextures[0][0]->height : 1;
+
 					if (fmt == SRC_INDEXED)
 					{
 						if (f == 0)
@@ -4231,7 +4498,7 @@ static void Mod_LoadMD5MeshModel (qmodel_t *mod, const void *buffer)
 							{
 								surf->fbtextures[surf->numskins][f] = TexMgr_LoadImage (
 									mod, va ("%s_luma", texname), fwidth, fheight, SRC_INDEXED, data, texname, 0,
-									TEXPREF_ALPHA | TEXPREF_FULLBRIGHT | TEXPREF_MIPMAP);
+									TEXPREF_ALPHA | TEXPREF_MIPMAP | TEXPREF_FULLBRIGHT);
 								break;
 							}
 						}
@@ -4242,14 +4509,42 @@ static void Mod_LoadMD5MeshModel (qmodel_t *mod, const void *buffer)
 						if (!surf->fbtextures[surf->numskins][f])
 						{
 							q_snprintf (texname, sizeof (texname), "progs/%s_%02u_%02u_glow", com_token, surf->numskins, f);
-							surf->fbtextures[surf->numskins][f] =
-								TexMgr_LoadImage (mod, texname, surf->skinwidth, surf->skinheight, SRC_RGBA, NULL, texname, 0, TEXPREF_MIPMAP);
+
+							// try to find matching glow texture :
+							unsigned int   glow_width, glow_height;
+							enum srcformat glow_fmt = SRC_RGBA;
+							void		  *glow_data = Image_LoadImage (texname, (int *)&glow_width, (int *)&glow_height, &glow_fmt);
+							// glow texture found:
+							if (glow_data)
+							{
+								assert (glow_fmt == SRC_RGBA);
+								assert (glow_width == fwidth);
+								assert (glow_height == fheight);
+								surf->fbtextures[surf->numskins][f] = TexMgr_LoadImage (
+									mod, texname, surf->skinwidth, surf->skinheight, SRC_RGBA, glow_data, texname, 0,
+									TEXPREF_ALPHA | TEXPREF_MIPMAP | TEXPREF_FULLBRIGHT);
+								Mem_Free (glow_data);
+							}
 						}
 						if (!surf->fbtextures[surf->numskins][f])
 						{
 							q_snprintf (texname, sizeof (texname), "progs/%s_%02u_%02u_luma", com_token, surf->numskins, f);
-							surf->fbtextures[surf->numskins][f] =
-								TexMgr_LoadImage (mod, texname, surf->skinwidth, surf->skinheight, SRC_RGBA, NULL, texname, 0, TEXPREF_MIPMAP);
+
+							// try to find matching luma texture :
+							unsigned int   luma_width, luma_height;
+							enum srcformat luma_fmt = SRC_RGBA;
+							void		  *luma_data = Image_LoadImage (texname, (int *)&luma_width, (int *)&luma_height, &luma_fmt);
+							// luma found:
+							if (luma_data)
+							{
+								assert (luma_fmt == SRC_RGBA);
+								assert (luma_width == fwidth);
+								assert (luma_height == fheight);
+								surf->fbtextures[surf->numskins][f] = TexMgr_LoadImage (
+									mod, texname, surf->skinwidth, surf->skinheight, SRC_RGBA, luma_data, texname, 0,
+									TEXPREF_ALPHA | TEXPREF_MIPMAP | TEXPREF_FULLBRIGHT);
+								Mem_Free (luma_data);
+							}
 						}
 					}
 
@@ -4279,16 +4574,15 @@ static void Mod_LoadMD5MeshModel (qmodel_t *mod, const void *buffer)
 			}
 		}
 
-		surf->skinwidth = surf->gltextures[0][0] ? surf->gltextures[0][0]->width : 1;
-		surf->skinheight = surf->gltextures[0][0] ? surf->gltextures[0][0]->height : 1;
 		surf->numposes = 1;
 
 		buffer = COM_Parse (buffer);
 		MD5EXPECT ("numverts");
 		surf->numverts_vbo = surf->numverts = MD5UINT ();
 
-		vinfo = Mem_Alloc (sizeof (*vinfo) * surf->numverts);
-		poutvertexes = Mem_Realloc (poutvertexes, sizeof (*poutvertexes) * (vertex_offset + surf->numverts));
+		vinfo = (md5vertinfo_t *)Mem_Realloc (vinfo, sizeof (*vinfo) * (vertex_offset + surf->numverts));
+		poutvertexes = (md5vert_t *)Mem_Realloc (poutvertexes, sizeof (*poutvertexes) * (vertex_offset + surf->numverts));
+		total_numverts += surf->numverts;
 		while (MD5CHECK ("vert"))
 		{
 			size_t idx = MD5UINT ();
@@ -4298,15 +4592,15 @@ static void Mod_LoadMD5MeshModel (qmodel_t *mod, const void *buffer)
 			poutvertexes[vertex_offset + idx].st[0] = MD5FLOAT ();
 			poutvertexes[vertex_offset + idx].st[1] = MD5FLOAT ();
 			MD5EXPECT (")");
-			vinfo[idx].firstweight = MD5UINT ();
-			vinfo[idx].count = MD5UINT ();
+			vinfo[vertex_offset + idx].firstweight = MD5UINT () + weight_offset; // shift firstwieight by numwieigts of previous meshes
+			vinfo[vertex_offset + idx].count = MD5UINT ();
 		}
-		vertex_offset += surf->numverts;
 
 		MD5EXPECT ("numtris");
 		surf->numtris = MD5UINT ();
 		surf->numindexes = surf->numtris * 3;
-		poutindexes = Mem_Realloc (poutindexes, sizeof (*poutindexes) * (index_offset + surf->numindexes));
+		poutindexes = (unsigned short *)Mem_Realloc (poutindexes, sizeof (*poutindexes) * (index_offset + surf->numindexes));
+		outhdr->total_numindexes += surf->numindexes;
 		while (MD5CHECK ("tri"))
 		{
 			size_t idx = MD5UINT ();
@@ -4318,41 +4612,53 @@ static void Mod_LoadMD5MeshModel (qmodel_t *mod, const void *buffer)
 				size_t t = MD5UINT ();
 				if (t > (size_t)surf->numverts)
 					Sys_Error ("vertex index out of bounds");
-				poutindexes[index_offset + idx + j] = t;
+				poutindexes[index_offset + idx + j] = t + vertex_offset; //  shift indices by numvertindexes of previous meshes
 			}
 		}
-		index_offset += surf->numindexes;
 
 		// md5 is a gpu-unfriendly interchange format. :(
 		MD5EXPECT ("numweights");
 		numweights = MD5UINT ();
-		weight = Mem_Alloc (sizeof (*weight) * numweights);
+		weight = (md5weightinfo_t *)Mem_Realloc (weight, sizeof (*weight) * (weight_offset + numweights));
+		total_numweights += numweights;
+
 		while (MD5CHECK ("weight"))
 		{
 			size_t idx = MD5UINT ();
 			if (idx >= numweights)
 				Sys_Error ("weight index out of bounds");
 
-			weight[idx].joint_index = MD5UINT ();
-			if (weight[idx].joint_index >= numjoints)
+			weight[weight_offset + idx].joint_index = MD5UINT ();
+			if (weight[weight_offset + idx].joint_index >= numjoints)
 				Sys_Error ("joint index out of bounds");
-			weight[idx].pos[3] = MD5FLOAT ();
+			weight[weight_offset + idx].pos[3] = MD5FLOAT ();
 			MD5EXPECT ("(");
-			weight[idx].pos[0] = MD5FLOAT () * weight[idx].pos[3];
-			weight[idx].pos[1] = MD5FLOAT () * weight[idx].pos[3];
-			weight[idx].pos[2] = MD5FLOAT () * weight[idx].pos[3];
+			weight[weight_offset + idx].pos[0] = MD5FLOAT () * weight[weight_offset + idx].pos[3];
+			weight[weight_offset + idx].pos[1] = MD5FLOAT () * weight[weight_offset + idx].pos[3];
+			weight[weight_offset + idx].pos[2] = MD5FLOAT () * weight[weight_offset + idx].pos[3];
 			MD5EXPECT (")");
 		}
-		// so make it gpu-friendly.
-		MD5_BakeInfluences (fname, joint_poses, poutvertexes, vinfo, weight, surf->numverts, numweights);
-		// and now make up the normals that the format lacks. we'll still probably have issues from seams, but then so did qme, so at least its faithful... :P
-		MD5_ComputeNormals (poutvertexes, surf->numverts, poutindexes, surf->numindexes);
-
-		Mem_Free (weight);
-		Mem_Free (vinfo);
 
 		MD5EXPECT ("}");
-	}
+
+		// increment offsets for the next meshes
+		vertex_offset += surf->numverts;
+		index_offset += surf->numindexes;
+		weight_offset += numweights;
+
+	} // end foreach mesh
+
+	// vertex indices are 16 bit (VK_INDEX_TYPE_UINT16) so we cannot address more than MAXALIASVERTS vertexes.
+	if (total_numverts > MAXALIASVERTS)
+		Sys_Error ("MD5 model %s has too many vertices (%d; max = %d)", mod->name, (int)total_numverts, MAXALIASVERTS);
+
+	// so make it gpu-friendly.
+	MD5_BakeInfluences (fname, joint_poses, poutvertexes, vinfo, weight, total_numverts, total_numweights);
+	// and now make up the normals that the format lacks. we'll still probably have issues from seams, but then so did qme, so at least its faithful... :P
+	MD5_ComputeNormals (poutvertexes, total_numverts, poutindexes, outhdr->total_numindexes);
+
+	Mem_Free (weight);
+	Mem_Free (vinfo);
 
 	TEMP_ALLOC_ZEROED (jointpose_t, inverted_joints, anim.numjoints * anim.numposes);
 	TEMP_ALLOC_ZEROED (jointpose_t, concat_joints, anim.numjoints);
@@ -4385,7 +4691,7 @@ static void Mod_LoadMD5MeshModel (qmodel_t *mod, const void *buffer)
 	mod->type = mod_alias;
 	mod->extradata[PV_MD5] = (byte *)outhdr;
 
-	Mod_CalcAliasBounds (mod, outhdr, vertex_offset, (byte *)poutvertexes); // johnfitz
+	Mod_CalcAliasBounds (mod, outhdr, total_numverts, (byte *)poutvertexes); // johnfitz
 
 	TEMP_FREE (joint_poses);
 	TEMP_FREE (joint_infos)

@@ -49,10 +49,17 @@ cvar_t sv_nostep = {"sv_nostep", "0", CVAR_NONE};
 cvar_t sv_freezenonclients = {"sv_freezenonclients", "0", CVAR_NONE};
 cvar_t sv_gameplayfix_spawnbeforethinks = {"sv_gameplayfix_spawnbeforethinks", "0", CVAR_NONE};
 cvar_t sv_gameplayfix_bouncedownslopes = {"sv_gameplayfix_bouncedownslopes", "1", CVAR_NONE}; // fixes grenades making horrible noises on slopes.
+cvar_t sv_fastpushmove = {"sv_fastpushmove", "0", CVAR_ARCHIVE}; // 0=old SV_PushMove processing; 1= faster SV_PushMove, with bugs ?
 
 #define MOVE_EPSILON 0.01
 
-void SV_Physics_Toss (edict_t *ent);
+static void SV_Physics_Toss (edict_t *ent);
+
+// For usage by SV_PushMove, allocate at max possible size
+static edict_t *moved_edict[MAX_EDICTS];
+static vec3_t	moved_from[MAX_EDICTS];
+static edict_t *pushable_ent_cache[MAX_EDICTS];
+static int		num_pushable_ent_cache;
 
 /*
 ================
@@ -94,12 +101,12 @@ void SV_CheckVelocity (edict_t *ent)
 	{
 		if (IS_NAN (ent->v.velocity[i]))
 		{
-			Con_Printf ("Got a NaN velocity on %s\n", PR_GetString (ent->v.classname));
+			Con_DPrintf ("Got a NaN velocity on %s\n", PR_GetString (ent->v.classname));
 			ent->v.velocity[i] = 0;
 		}
 		if (IS_NAN (ent->v.origin[i]))
 		{
-			Con_Printf ("Got a NaN origin on %s\n", PR_GetString (ent->v.classname));
+			Con_DPrintf ("Got a NaN origin on %s\n", PR_GetString (ent->v.classname));
 			ent->v.origin[i] = 0;
 		}
 		if (ent->v.velocity[i] > sv_maxvelocity.value)
@@ -119,7 +126,7 @@ in a frame.  Not used for pushmove objects, because they must be exact.
 Returns false if the entity removed itself.
 =============
 */
-qboolean SV_RunThink (edict_t *ent)
+static qboolean SV_RunThink (edict_t *ent)
 {
 	float thinktime;
 
@@ -172,7 +179,7 @@ SV_Impact
 Two entities have touched, so run their touch functions
 ==================
 */
-void SV_Impact (edict_t *e1, edict_t *e2)
+static void SV_Impact (edict_t *e1, edict_t *e2)
 {
 	int old_self, old_other;
 
@@ -208,7 +215,7 @@ returns the blocked flags (1 = floor, 2 = step / wall)
 */
 #define STOP_EPSILON 0.1
 
-int ClipVelocity (vec3_t in, vec3_t normal, vec3_t out, float overbounce)
+static int ClipVelocity (vec3_t in, vec3_t normal, vec3_t out, float overbounce)
 {
 	float backoff;
 	float change;
@@ -246,7 +253,7 @@ If steptrace is not NULL, the trace of any vertical wall hit will be stored
 ============
 */
 #define MAX_CLIP_PLANES 5
-int SV_FlyMove (edict_t *ent, float time, trace_t *steptrace)
+static int SV_FlyMove (edict_t *ent, float time, trace_t *steptrace)
 {
 	int		bumpcount, numbumps;
 	vec3_t	dir;
@@ -387,7 +394,7 @@ SV_AddGravity
 
 ============
 */
-void SV_AddGravity (edict_t *ent)
+static void SV_AddGravity (edict_t *ent)
 {
 	float	ent_gravity;
 	eval_t *val;
@@ -416,7 +423,7 @@ SV_PushEntity
 Does not change the entities velocity at all
 ============
 */
-trace_t SV_PushEntity (edict_t *ent, vec3_t push)
+static trace_t SV_PushEntity (edict_t *ent, vec3_t push)
 {
 	trace_t trace;
 	vec3_t	end;
@@ -447,9 +454,9 @@ SV_PushMove
 */
 cvar_t sv_gameplayfix_elevators = {"sv_gameplayfix_elevators", "2", CVAR_ARCHIVE}; // 0=off; 1=clients only; 2=all entities
 
-void SV_PushMove (edict_t *pusher, float movetime)
+static void SV_PushMove (edict_t *pusher, float movetime)
 {
-	int		 i, e;
+	int		 i;
 	edict_t *check, *block;
 	vec3_t	 mins, maxs, move;
 	vec3_t	 entorig, pushorig;
@@ -477,22 +484,40 @@ void SV_PushMove (edict_t *pusher, float movetime)
 	pusher->v.ltime += movetime;
 	SV_LinkEdict (pusher, false);
 
-	// johnfitz -- dynamically allocate
-	TEMP_ALLOC (edict_t *, moved_edict, qcvm->num_edicts);
-	TEMP_ALLOC (vec3_t, moved_from, qcvm->num_edicts);
-	// johnfitz
-
 	// see if any solid entities are inside the final position
 	num_moved = 0;
+
+	const bool fast_pushers = (sv_fastpushmove.value > 0.f);
+
+	int e = -1;
+
+	// beware, we skip entity 0:
 	check = NEXT_EDICT (qcvm->edicts);
-	for (e = 1; e < qcvm->num_edicts; e++, check = NEXT_EDICT (check))
+
+	while (true)
 	{
-		qboolean riding = false;
+		// TBC :does qcvm->num_edicts always constant here, i.e is there edicts allocs possible in this loop ?
+		if (e >= (fast_pushers ? num_pushable_ent_cache - 1 : qcvm->num_edicts - 1 - 1))
+			break;
+
+		e++;
+
+		if (fast_pushers)
+		{
+			check = pushable_ent_cache[e];
+		}
+		else if (e > 0)
+		{
+			check = NEXT_EDICT (check);
+		}
 
 		if (check->free)
 			continue;
+
 		if (check->v.movetype == MOVETYPE_PUSH || check->v.movetype == MOVETYPE_NONE || check->v.movetype == MOVETYPE_NOCLIP)
 			continue;
+
+		qboolean riding = false;
 
 		// if the entity is standing on the pusher, it will definately be moved
 		if (!(((int)check->v.flags & FL_ONGROUND) && PROG_TO_EDICT (check->v.groundentity) == pusher))
@@ -555,6 +580,7 @@ void SV_PushMove (edict_t *pusher, float movetime)
 		{ // fail the move
 			if (check->v.mins[0] == check->v.maxs[0])
 				continue;
+
 			if (check->v.solid == SOLID_NOT || check->v.solid == SOLID_TRIGGER)
 			{ // corpse
 				check->v.mins[0] = check->v.mins[1] = 0;
@@ -592,12 +618,9 @@ void SV_PushMove (edict_t *pusher, float movetime)
 				VectorCopy (moved_from[i], moved_edict[i]->v.origin);
 				SV_LinkEdict (moved_edict[i], false);
 			}
-			goto cleanup;
-		}
-	}
-cleanup:
-	TEMP_FREE (moved_from);
-	TEMP_FREE (moved_edict);
+			break;
+		} // end if block
+	}	  // foreach pushable entities
 }
 
 /*
@@ -606,7 +629,7 @@ SV_Physics_Pusher
 
 ================
 */
-void SV_Physics_Pusher (edict_t *ent)
+static void SV_Physics_Pusher (edict_t *ent)
 {
 	float thinktime;
 	float oldltime;
@@ -657,7 +680,7 @@ This is a big hack to try and fix the rare case of getting stuck in the world
 clipping hull.
 =============
 */
-void SV_CheckStuck (edict_t *ent)
+static void SV_CheckStuck (edict_t *ent)
 {
 	int	   i, j;
 	int	   z;
@@ -702,7 +725,7 @@ void SV_CheckStuck (edict_t *ent)
 SV_CheckWater
 =============
 */
-qboolean SV_CheckWater (edict_t *ent)
+static qboolean SV_CheckWater (edict_t *ent)
 {
 	vec3_t point;
 	int	   cont;
@@ -739,7 +762,7 @@ SV_WallFriction
 
 ============
 */
-void SV_WallFriction (edict_t *ent, trace_t *trace)
+static void SV_WallFriction (edict_t *ent, trace_t *trace)
 {
 	vec3_t forward, right, up;
 	float  d, i;
@@ -773,7 +796,7 @@ Try fixing by pushing one pixel in each direction.
 This is a hack, but in the interest of good gameplay...
 ======================
 */
-int SV_TryUnstick (edict_t *ent, vec3_t oldvel)
+static int SV_TryUnstick (edict_t *ent, vec3_t oldvel)
 {
 	int		i;
 	vec3_t	oldorg;
@@ -853,7 +876,7 @@ Only used by players
 ======================
 */
 #define STEPSIZE 18
-void SV_WalkMove (edict_t *ent)
+static void SV_WalkMove (edict_t *ent)
 {
 	vec3_t	upmove, downmove;
 	vec3_t	oldorg, oldvel;
@@ -953,7 +976,7 @@ SV_Physics_Client
 Player character actions
 ================
 */
-void SV_Physics_Client (edict_t *ent, int num)
+static void SV_Physics_Client (edict_t *ent, int num)
 {
 	if (!svs.clients[num - 1].active)
 		return; // unconnected slot
@@ -1033,7 +1056,7 @@ SV_Physics_None
 Non moving objects can only think
 =============
 */
-void SV_Physics_None (edict_t *ent)
+static void SV_Physics_None (edict_t *ent)
 {
 	// regular thinking
 	SV_RunThink (ent);
@@ -1046,7 +1069,7 @@ SV_Physics_Noclip
 A moving object that doesn't obey physics
 =============
 */
-void SV_Physics_Noclip (edict_t *ent)
+static void SV_Physics_Noclip (edict_t *ent)
 {
 	// regular thinking
 	if (!SV_RunThink (ent))
@@ -1112,7 +1135,7 @@ SV_Physics_Toss
 Toss, bounce, and fly movement.  When onground, do nothing.
 =============
 */
-void SV_Physics_Toss (edict_t *ent)
+static void SV_Physics_Toss (edict_t *ent)
 {
 	trace_t trace;
 	vec3_t	move;
@@ -1186,7 +1209,7 @@ This is also used for objects that have become still on the ground, but
 will fall if the floor is pulled out from under them.
 =============
 */
-void SV_Physics_Step (edict_t *ent)
+static void SV_Physics_Step (edict_t *ent)
 {
 	qboolean hitsound;
 
@@ -1274,6 +1297,23 @@ void SV_Physics (void)
 		entity_cap = svs.maxclients + 1; // Only run physics on clients and the world
 	else
 		entity_cap = qcvm->num_edicts;
+
+	// fill the pushable entities cache
+	if (sv_fastpushmove.value > 0.f)
+	{
+		num_pushable_ent_cache = 0;
+		// beware, we skip entity 0 here:
+		edict_t *check = NEXT_EDICT (qcvm->edicts);
+		for (int e = 1; e < qcvm->num_edicts; e++, check = NEXT_EDICT (check))
+		{
+			if (check->free)
+				continue;
+			if (check->v.movetype == MOVETYPE_PUSH || check->v.movetype == MOVETYPE_NONE || check->v.movetype == MOVETYPE_NOCLIP)
+				continue;
+
+			pushable_ent_cache[num_pushable_ent_cache++] = check;
+		}
+	}
 
 	// for (i=0 ; i<sv.num_edicts ; i++, ent = NEXT_EDICT(ent))
 	for (i = 0; i < entity_cap; i++, ent = NEXT_EDICT (ent))

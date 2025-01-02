@@ -2185,6 +2185,9 @@ void M_Options_Key (int k)
 //=============================================================================
 /* KEYS MENU */
 
+#define QUICKSAVE "echo Quicksaving...; wait; save quick"
+#define QUICKLOAD "echo Quickloading...; wait; load quick"
+
 const char *bindnames[][2] = {
 	{"+forward", "Move Forward"},
 	{"+back", "Move Backward"},
@@ -2198,15 +2201,25 @@ const char *bindnames[][2] = {
 	{"+movedown", "Swim down"},
 	{"+showscores", "Show Scores"},
 	{"impulse 10", "Next weapon"},
-	{"impulse 12", "Prev weapon"},
+	{"impulse 12", "Previous weapon"},
 	{"impulse 1", "Axe"},
 	{"impulse 2", "Shotgun"},
 	{"impulse 3", "Super Shotgun"},
 	{"impulse 4", "Nailgun"},
 	{"impulse 5", "Super Nailgun"},
-	{"impulse 6", "Grenade Lnchr."},
-	{"impulse 7", "Rocket Lnchr."},
+	{"impulse 6", "Grenade Launcher"},
+	{"impulse 7", "Rocket Launcher"},
 	{"impulse 8", "Thunderbolt"},
+	{"", ""}, // placeholder used as separator
+	{QUICKSAVE, "Quick save"},
+	{QUICKLOAD, "Quick load"},
+	{"menu_save", "Save menu"},
+	{"menu_load", "Load menu"},
+	{"menu_options", "Options menu"},
+	{"menu_multiplayer", "Multiplayer menu"},
+	{"quit", "Quit"},
+	{"help", "Help"},
+	{"screenshot", "Screenshot"},
 	{"toggleconsole", "Toggle console"},
 };
 
@@ -2287,26 +2300,28 @@ static void M_Keys_Draw (cb_context_t *cbx)
 	// search for known bindings
 	for (i = 0; i < BINDS_PER_PAGE && i < (int)NUMCOMMANDS; i++)
 	{
+#define KEY_STRING_DRAW_POS (160)
 		y = 48 + 8 * i;
 
 		M_Print (cbx, 10, y, bindnames[i + first_key][1]);
 
 		M_FindKeysForCommand (bindnames[i + first_key][0], keys);
 
-		if (keys[0] == -1)
+		// do not draw anything if the bindnames is empty, it means a plceholder separator.
+		if (strlen (bindnames[i + first_key][0]) && (keys[0] == -1))
 		{
-			M_Print (cbx, 140, y, "???");
+			M_Print (cbx, KEY_STRING_DRAW_POS, y, "???");
 		}
 		else
 		{
 			name = Key_KeynumToString (keys[0]);
-			M_Print (cbx, 140, y, name);
+			M_Print (cbx, KEY_STRING_DRAW_POS, y, name);
 			x = strlen (name) * 8;
 			if (keys[1] != -1)
 			{
 				name = Key_KeynumToString (keys[1]);
-				M_PrintHighlighted (cbx, 138 + x, y, ",");
-				M_Print (cbx, 138 + x + 12, y, name);
+				M_PrintHighlighted (cbx, (KEY_STRING_DRAW_POS - 2) + x, y, ",");
+				M_Print (cbx, (KEY_STRING_DRAW_POS - 2) + x + 12, y, name);
 				x = x + 12 + strlen (name) * 8;
 			}
 		}
@@ -2316,7 +2331,7 @@ static void M_Keys_Draw (cb_context_t *cbx)
 		M_DrawScrollbar (cbx, MENU_SCROLLBAR_X, 56, (float)(first_key) / (NUMCOMMANDS - BINDS_PER_PAGE), BINDS_PER_PAGE - 2);
 
 	if (bind_grab)
-		Draw_Character (cbx, 130, 48 + (keys_cursor - first_key) * 8, '=');
+		Draw_Character (cbx, (KEY_STRING_DRAW_POS - 10), 48 + (keys_cursor - first_key) * 8, '=');
 	else
 	{
 		M_Mouse_UpdateListCursor (&keys_cursor, 12, 400, 48, 8, keys_height, first_key);
@@ -2359,6 +2374,9 @@ void M_Keys_Key (int k)
 	case K_KP_ENTER:
 	case K_ABUTTON:
 		M_FindKeysForCommand (bindnames[keys_cursor][0], keys);
+		// if bindnames is empty, it means as a placeholder separator
+		if (!strlen (bindnames[keys_cursor][0]))
+			return;
 		S_LocalSound ("misc/menu2.wav");
 		if (keys[1] != -1)
 			M_UnbindCommand (bindnames[keys_cursor][0]);
@@ -3740,6 +3758,11 @@ qboolean M_TextEntry (void)
 	default:
 		return false;
 	}
+}
+
+qboolean M_WaitingForKeyBinding (void)
+{
+	return key_dest == key_menu && m_state == m_keys && bind_grab;
 }
 
 void M_ConfigureNetSubsystem (void)

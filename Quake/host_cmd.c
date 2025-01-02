@@ -30,6 +30,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #endif
 
 extern cvar_t pausable;
+extern cvar_t nomonsters;
 extern cvar_t autoload;
 extern cvar_t autofastload;
 
@@ -1080,6 +1081,12 @@ static void Host_Savegame_f (void)
 		return;
 	}
 
+	if (sv.nomonsters)
+	{
+		Con_Printf ("Can't save when using \"nomonsters\".\n");
+		return;
+	}
+
 	if (cl.intermission)
 	{
 		Con_Printf ("Can't save in intermission.\n");
@@ -1331,6 +1338,12 @@ static void Host_Loadgame_f (void)
 		return;
 	}
 
+	if (nomonsters.value)
+	{
+		Con_Warning ("\"%s\" disabled automatically.\n", nomonsters.name);
+		Cvar_SetValueQuick (&nomonsters, 0.f);
+	}
+
 	cls.demonum = -1; // stop demo loop in case this fails
 
 	char	*save_path = multiuser ? SDL_GetPrefPath ("vkQuake", COM_GetGameNames (true)) : NULL;
@@ -1574,9 +1587,11 @@ static void Host_Loadgame_f (void)
 			ent = EDICT_NUM (entnum);
 			if (entnum < qcvm->num_edicts)
 			{
+				// Maintain the free-list conststency
+				if (ent->free)
+					ED_RemoveFromFreeList (ent);
+
 				ent->free = false;
-				ent->next_free = NULL;
-				ent->prev_free = NULL;
 				memset (&ent->v, 0, qcvm->progs->entityfields * 4);
 			}
 			else
@@ -1616,6 +1631,8 @@ static void Host_Loadgame_f (void)
 
 		Send_Spawn_Info (svs.clients, true);
 	}
+	else if (entnum < qcvm->num_edicts)
+		Con_Warning ("Save game had less entities than map (%d < %d)\n", entnum, qcvm->num_edicts); // should be Host_Error, but try to recover
 
 	qcvm->num_edicts = entnum;
 

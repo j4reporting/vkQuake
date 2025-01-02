@@ -90,6 +90,7 @@ typedef struct texture_s
 	char				name[16];
 	unsigned			width, height;
 	unsigned			shift;					  // Q64
+	char				source_file[MAX_QPATH];	  // relative filepath to data source, or "" if source is in memory
 	src_offset_t		source_offset;			  // offset from start of BSP file for BSP textures
 	struct gltexture_s *gltexture;				  // johnfitz -- pointer to gltexture
 	struct gltexture_s *fullbright;				  // johnfitz -- fullbright mask texture
@@ -102,6 +103,7 @@ typedef struct texture_s
 	struct texture_s   *anim_next;				  // in the animation sequence
 	struct texture_s   *alternate_anims;		  // bmodels in frmae 1 use these
 	unsigned			offsets[MIPLEVELS];		  // four mip maps stored
+	qboolean			palette;
 } texture_t;
 
 #define SURF_PLANEBACK		2
@@ -264,8 +266,6 @@ typedef struct
 	int				   maxwidth;
 	int				   maxheight;
 	int				   numframes;
-	float			   beamlength; // remove?
-	void			  *cachespot;  // remove?
 	mspriteframedesc_t frames[1];
 } msprite_t;
 
@@ -309,20 +309,6 @@ typedef struct
 	char	   name[16];
 } maliasframedesc_t;
 
-typedef struct
-{
-	trivertx_t bboxmin;
-	trivertx_t bboxmax;
-	int		   frame;
-} maliasgroupframedesc_t;
-
-typedef struct
-{
-	int					   numframes;
-	int					   intervals;
-	maliasgroupframedesc_t frames[1];
-} maliasgroup_t;
-
 // !!! if this is changed, it must be changed in asm_draw.h too !!!
 typedef struct mtriangle_s
 {
@@ -359,6 +345,8 @@ typedef struct aliashdr_s
 	int					flags;
 	float				size;
 	int					numindexes;
+	// total nunumindexes in index_buffer, made of the union of this aliashdr_t and all of its nextsurface indexes.
+	int					total_numindexes;
 	int					numverts_vbo;
 	int					numposes;
 	aliashdr_t		   *nextsurface; // spike
@@ -394,13 +382,18 @@ typedef struct jointpose_s
 	float mat[12];
 } jointpose_t; // pose data for a single joint.
 
-#define MAXALIASTRIS   4096				  // ericw -- was 2048
-#define MAXALIASVERTS  (3 * MAXALIASTRIS) // johnfitz -- was 1024
-#define MAXALIASFRAMES 2048				  // spike -- was 256
+// QS limits : vkQuake is no longer constrained by QS limits,
+// so those values are only used to trace QS incompatibilities.
+#define MAXALIASVERTS_QS 2000 // johnfitz -- was 1024
+#define MAXALIASTRIS_QS	 4096 // ericw -- was 2048
 
-extern mtriangle_t triangles[MAXALIASTRIS];
-extern stvert_t	   stverts[MAXALIASVERTS];
-extern trivertx_t *poseverts[MAXALIASFRAMES];
+// vkQuake limits:
+#define MAXALIASVERTS  0x7fff // same as Ironwail. Could we go until 0xFFFF with VK_INDEX_TYPE_UINT16 in vk case ?
+#define MAXALIASFRAMES 2048	  // spike -- was 256
+
+extern stvert_t		stverts[MAXALIASVERTS];
+extern mtriangle_t *triangles;
+extern trivertx_t  *poseverts[MAXALIASFRAMES];
 
 //===================================================================
 

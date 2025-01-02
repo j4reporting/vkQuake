@@ -569,7 +569,7 @@ const char *Key_KeynumToString (int keynum)
 	keyname_t  *kn;
 
 	if (keynum == -1)
-		return "<KEY NOT FOUND>";
+		return "";
 	if (keynum > 32 && keynum < 127)
 	{ // printable ascii
 		tinystr[0] = keynum;
@@ -867,7 +867,6 @@ void Key_Init (void)
 	menubound[K_ESCAPE] = true;
 	for (i = 0; i < 12; i++)
 		menubound[K_F1 + i] = true;
-
 	//
 	// register our functions
 	//
@@ -1074,7 +1073,7 @@ void Key_EventWithKeycode (int key, qboolean down, int keycode)
 	}
 
 	// if not a consolekey, send to the interpreter no matter what mode is
-	if ((key_dest == key_menu && menubound[key]) || (key_dest == key_console && !consolekeys[key]) ||
+	if ((key_dest == key_menu && menubound[key] && !M_WaitingForKeyBinding ()) || (key_dest == key_console && !consolekeys[key]) ||
 		(key_dest == key_game && (!con_forcedup || !consolekeys[key])))
 	{
 		kb = keybindings[key];

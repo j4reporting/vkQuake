@@ -37,6 +37,8 @@ unsigned int sv_protocol_pext2 = PEXT2_SUPPORTED_SERVER; // spike
 static cvar_t sv_netsort = {"sv_netsort", "1", CVAR_NONE};
 static cvar_t sv_smoothplatformlerps = {"sv_smoothplatformlerps", "1", CVAR_NONE};
 
+extern cvar_t nomonsters;
+
 /*
 =============
 SV_UsePredThinkPos
@@ -1134,6 +1136,7 @@ void SV_Init (void)
 	extern cvar_t sv_gameplayfix_spawnbeforethinks;
 	extern cvar_t sv_gameplayfix_bouncedownslopes;
 	extern cvar_t sv_gameplayfix_elevators;
+	extern cvar_t sv_fastpushmove;
 	extern cvar_t sv_friction;
 	extern cvar_t sv_edgefriction;
 	extern cvar_t sv_stopspeed;
@@ -1160,6 +1163,7 @@ void SV_Init (void)
 	Cvar_RegisterVariable (&sv_gameplayfix_spawnbeforethinks);
 	Cvar_RegisterVariable (&sv_gameplayfix_bouncedownslopes);
 	Cvar_RegisterVariable (&sv_gameplayfix_elevators);
+	Cvar_RegisterVariable (&sv_fastpushmove);
 	Cvar_RegisterVariable (&pr_checkextension);
 	Cvar_RegisterVariable (&sv_altnoclip); // johnfitz
 	Cvar_RegisterVariable (&sv_netsort);
@@ -3149,8 +3153,6 @@ void SV_SpawnServer (const char *server)
 	/* Host_ClearMemory() called above already cleared the whole sv structure */
 	qcvm->max_edicts = CLAMP (MIN_EDICTS, (int)max_edicts.value, MAX_EDICTS);  // johnfitz -- max_edicts cvar
 	qcvm->edicts = (edict_t *)Mem_Alloc (qcvm->max_edicts * qcvm->edict_size); // ericw -- sv.edicts switched to use malloc()
-	assert (qcvm->free_edicts_head == NULL);
-	assert (qcvm->free_edicts_tail == NULL);
 
 	sv.datagram.maxsize = sizeof (sv.datagram_buf);
 	sv.datagram.cursize = 0;
@@ -3179,6 +3181,7 @@ void SV_SpawnServer (const char *server)
 
 	sv.state = ss_loading;
 	sv.paused = false;
+	sv.nomonsters = (nomonsters.value != 0.f);
 
 	qcvm->time = 1.0;
 
