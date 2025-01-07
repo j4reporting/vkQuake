@@ -8,7 +8,7 @@ cd /usr/src/vkQuake
 
 rm -rf build/appimage
 
-python3 /opt/meson/meson.py build/appimage -Dbuildtype=release -Db_lto=true -Dmp3_lib=mad
+python3 /opt/meson/meson.py build/appimage -Dbuildtype=release -Db_lto=true
 ninja -C build/appimage
 
 cd Packaging/AppImage
