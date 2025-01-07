@@ -17,6 +17,7 @@ RUN apt-get update \
 	libdbus-1-dev \
 	libibus-1.0-dev \
 	libmad0-dev \
+ 	libmpg123-dev \
 	libopenal-dev \
 	libpulse-dev \
 	libsndio-dev \
