@@ -33,8 +33,11 @@ RUN apt-get update \
 	libflac-dev \
 	libopus-dev \
 	libopusfile-dev \
+	libwayland-dev \
+	libxkbcommon-dev \
 	vulkan-sdk \
 	zlib1g-dev \
+	
  && rm -rf /var/lib/apt/lists/*
 
 RUN cd /tmp \
