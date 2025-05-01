@@ -1854,20 +1854,8 @@ static void M_GraphicsOptions_AdjustSliders (int dir, qboolean mouse)
 		Cvar_SetValueQuick (&vid_filter, (float)(((int)vid_filter.value + 2 + dir) % 2));
 		break;
 	case GRAPHICS_OPT_MAX_FPS:
-	{
-		float clamped_host_maxfps = CLAMP (MIN_FPS_MENU_VALUE, host_maxfps.value, MAX_FPS_MENU_VALUE);
-
-		float host_fps_slider_value = (host_maxfps.value <= 0.0f) ? MAX_FPS_MENU_VALUE + FPS_MENU_VALUE_STEP : clamped_host_maxfps;
-
-		f = roundf (M_GetSliderPos (
-			MIN_FPS_MENU_VALUE, MAX_FPS_MENU_VALUE + FPS_MENU_VALUE_STEP, host_fps_slider_value, false, mouse, clamped_mouse, dir, FPS_MENU_VALUE_STEP,
-			2.0f * MAX_FPS_MENU_VALUE));
-
-		float changed_host_maxfps = (f >= MAX_FPS_MENU_VALUE + FPS_MENU_VALUE_STEP) ? 0.0f : f;
-
-		Cvar_SetValueQuick (&host_maxfps, changed_host_maxfps);
-	}
-	break;
+		Cvar_SetValueQuick (&host_maxfps, (float)CLAMP (0, (((int)host_maxfps.value + (dir * 10)) / 10) * 10, 1000));
+		break;
 	case GRAPHICS_OPT_ANTIALIASING_SAMPLES:
 		M_GraphicsOptions_ChooseNextAASamples (dir);
 		Cbuf_AddText ("vid_restart\n");
@@ -1973,26 +1961,11 @@ static void M_GraphicsOptions_Draw (cb_context_t *cbx)
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * GRAPHICS_OPT_FILTER, "Textures");
 	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * GRAPHICS_OPT_FILTER, (vid_filter.value == 0) ? "smooth" : "classic");
 
-	// Max FPS special display
-	{
-		M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * GRAPHICS_OPT_MAX_FPS, "Max FPS");
-
-		if (host_maxfps.value <= 0)
-		{
-			M_DrawSlider (cbx, MENU_SLIDER_X, top + CHARACTER_SIZE * GRAPHICS_OPT_MAX_FPS, 1.0, "no limit");
-		}
-		else
-		{
-			const float max_r_value = 1.0 - (FPS_MENU_VALUE_STEP / MAX_FPS_MENU_VALUE);
-
-			// slider knob normal range is [0.0, max_r_value] because 1.0 is reserved for "no limit"
-			float clamped_fps = CLAMP (MIN_FPS_MENU_VALUE, host_maxfps.value, MAX_FPS_MENU_VALUE);
-			r = (max_r_value * (clamped_fps - MIN_FPS_MENU_VALUE)) / (MAX_FPS_MENU_VALUE - MIN_FPS_MENU_VALUE);
-
-			// label displays the real host_fps value if > 0
-			M_DrawSlider (cbx, MENU_SLIDER_X, top + CHARACTER_SIZE * GRAPHICS_OPT_MAX_FPS, r, va ("%.0f", host_maxfps.value));
-		}
-	}
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * GRAPHICS_OPT_MAX_FPS, "Max FPS");
+	if (host_maxfps.value <= 0)
+		M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * GRAPHICS_OPT_MAX_FPS, "no limit");
+	else
+		M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * GRAPHICS_OPT_MAX_FPS, va ("%" SDL_PRIu32, q_min ((uint32_t)host_maxfps.value, (uint32_t)1000)));
 
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * GRAPHICS_OPT_ANTIALIASING_SAMPLES, "Antialiasing");
 	M_Print (
