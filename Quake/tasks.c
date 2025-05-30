@@ -19,6 +19,9 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 */
 // tasks.c -- parallel task system
 #include "arch_def.h"
+#if defined(PLATFORM_UNIX) && !defined(PLATFORM_OSX) && !defined(_GNU_SOURCE)
+#define _GNU_SOURCE
+#endif
 #include "tasks.h"
 #include "atomics.h"
 #include "quakedef.h"
@@ -29,8 +32,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
-#elif defined(PLATFORM_UNIX) && !defined(PLATFORM_OSX) && !defined(TASK_AFFINITY_NOT_AVAILABLE)
-#define _GNU_SOURCE
+#elif defined(TASK_AFFINITY_AVAILABLE)
 #include <sched.h>
 #include <pthread.h>
 #endif
@@ -322,7 +324,8 @@ static bool Task_Pin_Current_Worker (int pinned_index)
 
 	return true;
 
-#elif defined(PLATFORM_UNIX) && !defined(PLATFORM_OSX) && !defined(TASK_AFFINITY_NOT_AVAILABLE)
+//#elif defined(PLATFORM_UNIX) && !defined(PLATFORM_OSX) && defined(TASK_AFFINITY_AVAILABLE)
+#elif defined(TASK_AFFINITY_AVAILABLE)
 	// valid for *Nix with GNU pthread extension pthread_setaffinity_np()
 	//  which apparently is not available on OSX so skip it in that case.
 	cpu_set_t cpuset;
