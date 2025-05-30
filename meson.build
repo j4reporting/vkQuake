@@ -5,9 +5,9 @@ cc = meson.get_compiler('c')
 if cc.has_header_symbol('sched.h', 'CPU_ZERO', prefix: '#define _GNU_SOURCE')
     message('sched.h found, enabling  task affinity support.')
     add_project_arguments('-DTASK_AFFINITY_AVAILABLE', language: 'c')
-	add_project_arguments('-D_GNU_SOURCE', language: 'c' )
+    add_project_arguments('-D_GNU_SOURCE', language: 'c' )
 else
-	message('Warning: sched.h not found, task affinity not available.')
+    message('Warning: sched.h not found, task affinity not available.')
 endif
 
 shaders = [
