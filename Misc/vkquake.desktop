@@ -1,0 +1,6 @@
+[Desktop Entry]
+Categories=Game;Shooter;
+Icon=vkquake
+Name=vkquake
+Type=Application
+Exec=vkquake %F
