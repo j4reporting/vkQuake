@@ -17,8 +17,7 @@ jobs:
         platform:
         - { name: Windows (ucrt64),  os: windows-latest, shell: 'msys2 {0}', msystem: ucrt64, msys-env: mingw-w64-ucrt-x86_64, makefile: Makefile.w64 }
         - { name: Windows (mingw64),  os: windows-latest, shell: 'msys2 {0}', msystem: mingw64, msys-env: mingw-w64-x86_64, makefile: Makefile.w64 }
-        - { name: Windows (mingw32),  os: windows-latest, shell: 'msys2 {0}', msystem: mingw32, msys-env: mingw-w64-i686, makefile: Makefile.w32 }
-
+      
     steps:
     - name: Set up MSYS2
       uses: msys2/setup-msys2@v2
