@@ -96,7 +96,7 @@ vkQuake.exe: $(SHADER_OBJS) $(OBJS) $(SYSOBJ_RES)
 	$(call DO_STRIP,$@)
 
 dll:
-	ldd *.exe
+	ldd ${DEFAULT_TARGET}
 	if [ -f $(LIBWINPTHREAD) ]; then \
 		cp -p $(LIBWINPTHREAD)  . ; \
 	fi
