@@ -22,7 +22,8 @@ jobs:
       uses: msys2/setup-msys2@v2
       with:
         msystem: ${{ matrix.platform.msystem }}
-        install: base-devel
+        install: base-devel 
+            coreutils
           ${{ matrix.platform.msys-env }}-gcc-compat
           ${{ matrix.platform.msys-env }}-glslang
           ${{ matrix.platform.msys-env }}-vulkan-headers
