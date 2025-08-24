@@ -10,7 +10,8 @@ WINDRES ?= windres
 GLSLANG = glslangValidator
 DEBUG ?= 0
 
-CHECK_GCC = $(shell if echo | $(CC) $(1) -Werror -S -o /dev/null -xc - > /dev/null 2>&1; then echo "$(1)"; else echo "$(2)"; fi;)
+#CHECK_GCC = $(shell if echo | $(CC) $(1) -Werror -S -o /dev/null -xc - > /dev/null 2>&1; then echo "$(1)"; else echo "$(2)"; fi;)
+CHECK_GCC = $(shell if echo | $(CC) $(1) -S -o /dev/null -xc - > /dev/null 2>&1; then echo "$(1)"; else echo "$(2)"; fi;)
 
 CFLAGS += -MMD -Wall -Wno-trigraphs -Werror -std=gnu11
 ifneq ($(HOST_OS),darwin)
