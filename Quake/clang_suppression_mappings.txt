@@ -1,0 +1,3 @@
+# Suppress -Wunused warnings in pr_edict.c
+[unused-but-set-variable]
+src:pr_edict.c

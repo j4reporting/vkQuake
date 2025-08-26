@@ -1,6 +1,6 @@
 HOST_OS =$(shell uname|sed -e s/_.*//|tr '[:upper:]' '[:lower:]')
 
-CC = gcc
+CC ?= gcc
 # HOST_CC is for bintoc which is run on the host OS, not
 #         the target OS: cross-compile friendliness.
 HOST_CC = gcc
