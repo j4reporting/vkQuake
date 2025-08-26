@@ -31,7 +31,11 @@ VORBISLIB = vorbis
 CPUFLAGS =
 LDFLAGS ?=
 DFLAGS ?=
-CFLAGS ?=
+CFLAGS ?= 
+
+ifeq  ($(CC),clang)
+  CFLAGS += --warning-suppression-mappings=clang_suppression_mappings.txt
+endif
 
 ifeq ($(DO_USERDIRS),1)
 CFLAGS += -DDO_USERDIRS=1
