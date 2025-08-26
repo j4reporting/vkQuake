@@ -26,10 +26,9 @@ VORBISLIB = vorbis
 # build variables
 # ---------------------------
 CPUFLAGS =
-#LDFLAGS = -m64 -mwindows -static-libgcc
 LDFLAGS = -mwindows -static-libgcc
 DFLAGS ?=
-#CFLAGS ?= -m64 -D_WIN32_WINNT=0x0A00
+CFLAGS ?= --warning-suppression-mappings=clang_suppression_mappings.txt
 
 # ---------------------------
 # objects
@@ -67,14 +66,12 @@ CODEC_LINK = -L${MINGW_PREFIX}/lib
 
 VK_SDK_PATH=${MSYSTEM_PREFIX}
 VULKAN_INC = -I$(VK_SDK_PATH)/include
-#VULKAN_LINK= -L../Windows/misc/x64 # -L$(VK_SDK_PATH)/lib 
-VULKAN_LINK= -L$(VK_SDK_PATH)/lib 
+VULKAN_LINK= -L$(VK_SDK_PATH)/lib
 VULKAN_LIBS= -lvulkan-1
 CFLAGS += $(VULKAN_INC)
 
 COMMON_LIBS:= -lwinmm
 
-#LIBS := $(COMMON_LIBS) $(NET_LIBS) $(CODEC_LINK) $(CODECLIBS) $(VULKAN_LINK) $(VULKAN_LIBS) -lout123 -lsyn123
 LIBS := $(COMMON_LIBS) $(NET_LIBS) $(CODEC_LINK) $(CODECLIBS) $(VULKAN_LINK) $(VULKAN_LIBS)
 
 SYSOBJ_RES = vkQuake.res

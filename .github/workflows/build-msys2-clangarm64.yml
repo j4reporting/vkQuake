@@ -15,7 +15,7 @@ jobs:
       fail-fast: false
       matrix:
         platform:
-        - { name: Windows (clangarm64),  os: windows-11-arm, shell: 'msys2 {0}', msystem: clangarm64, msys-env: mingw-w64-clang-aarch64, makefile: Makefile.arm64 }
+        - { name: Windows (clangarm64),  os: windows-11-arm, shell: 'msys2 {0}', msystem: clangarm64, msys-env: mingw-w64-clang-aarch64, makefile: Makefile.wA64 }
 
     steps:
     - name: Set up MSYS2
