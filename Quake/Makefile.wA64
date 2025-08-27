@@ -84,11 +84,10 @@ LIBWINPTHREAD = $(MSYSTEM_PREFIX)/bin/libwinpthread-1.dll
 all: $(DEFAULT_TARGET) dll
 
 %.res: ../Windows/%.rc
-	$(WINDRES) --verbose -I../Windows -I../Quake --input=../Windows/vkQuake_arm64.rc --output-format=coff --target=pe-aarch64-little -o $@ $<
-	#$(WINDRES) -I../Windows -I../Quake --output-format=coff --target=pe-x86-64 -o $@ $<
+	$(WINDRES) --verbose -I ${MSYSTEM_PREFIX}/include -I../Windows -I../Quake --output-format=coff --target=pe-aarch64-little -o $@ $<
 
-vkQuake.exe: $(SHADER_OBJS) $(OBJS) 
-	$(LINKER) $(SHADER_OBJS) $(OBJS) $(LDFLAGS) $(LIBS) $(SDL_LIBS) -o $@
+vkQuake.exe: $(SHADER_OBJS) $(OBJS) $(SYSOBJ_RES)
+	$(LINKER) $(SHADER_OBJS) $(OBJS) $(SYSOBJ_RES) $(LDFLAGS) $(LIBS) $(SDL_LIBS) -o $@
 	$(call DO_STRIP,$@)
 
 dll:
