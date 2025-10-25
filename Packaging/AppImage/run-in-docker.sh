@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-FOLDER=vkquake-${VERSION}_linux64
+FOLDER=vkquake-0.0.1_linux64
 ARCHIVE=$FOLDER.tar.gz
 
 cd /usr/src/vkQuake
