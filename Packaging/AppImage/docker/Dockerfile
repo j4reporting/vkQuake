@@ -8,6 +8,7 @@ RUN apt-get update \
  && apt-get update \
  && apt-get install -y \
 	build-essential \
+	gcc-10 \
 	file \
 	fuse \
 	unzip \
@@ -35,6 +36,7 @@ RUN apt-get update \
 	libopusfile-dev \
 	vulkan-sdk \
 	zlib1g-dev \
+ && ln -sf gcc-10 /usr/bin/gcc \
  && rm -rf /var/lib/apt/lists/*
 
 RUN cd /tmp \
