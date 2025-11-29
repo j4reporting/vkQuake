@@ -15,7 +15,9 @@ jobs:
       fail-fast: false
       matrix:
         platform:
+	- { name: Windows (ucrt64),  os: windows-latest, shell: 'msys2 {0}', msystem: ucrt64, msys-env: mingw-w64-ucrt-x86_64, makefile: Makefile.w64 }
         - { name: Windows (mingw64),  os: windows-latest, shell: 'msys2 {0}', msystem: mingw64, msys-env: mingw-w64-x86_64, makefile: Makefile.w64 }
+        - { name: Windows (clang64),  os: windows-latest, shell: 'msys2 {0}', msystem: clang64, msys-env: mingw-w64-clang64, makefile: Makefile.w64 }
 
     steps:
     - name: Set up MSYS2
