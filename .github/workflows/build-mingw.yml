@@ -6,37 +6,60 @@ jobs:
   build-mingw:
     name: ${{ matrix.platform.name }}
     runs-on: ${{ matrix.platform.os }}
-
     defaults:
       run:
         shell: ${{ matrix.platform.shell }}
-
     strategy:
       fail-fast: false
       matrix:
         platform:
-        - { name: Windows (mingw64),  os: windows-latest, shell: 'msys2 {0}', msystem: mingw64, msys-env: mingw-w64-x86_64, makefile: Makefile.w64 }
+          - name: Windows (mingw64)
+            os: windows-latest
+            shell: 'msys2 {0}'
+            msystem: mingw64
+            msys-env: mingw-w64-x86_64
+            makefile: Makefile.w64
+            install_extra: ""
+
+          - name: Windows (clangarm64)
+            os: windows-11-arm
+            shell: 'msys2 {0}'
+            msystem: clangarm64
+            msys-env: mingw-w64-clang-aarch64
+            makefile: Makefile.w64a
+            install_extra: >-
+              mingw-w64-clang-aarch64-vulkan-headers
+              mingw-w64-clang-aarch64-opus
+              mingw-w64-clang-aarch64-opusfile
+              mingw-w64-clang-aarch64-mpg123
+              mingw-w64-clang-aarch64-SDL2
+              mingw-w64-clang-aarch64-flac
+              mingw-w64-clang-aarch64-libmad
+              mingw-w64-clang-aarch64-libogg
+              mingw-w64-clang-aarch64-libvorbis
+              mingw-w64-clang-aarch64-libxmp
 
     steps:
-    - name: Set up MSYS2
-      uses: msys2/setup-msys2@v2
-      with:
-        msystem: ${{ matrix.platform.msystem }}
-        install: base-devel
-          ${{ matrix.platform.msys-env }}-gcc
-          ${{ matrix.platform.msys-env }}-glslang
-
-    - uses: actions/checkout@v6
-
-    - name: Build MinGW
-      run: |
-        set -eu
-        parallel="$(getconf _NPROCESSORS_ONLN)"
-        make -j"${parallel}" -C Quake -f ${{ matrix.platform.makefile }} all
-    - name: Upload vkQuake
-      uses: actions/upload-artifact@v7
-      with:
-        name: vkQuake archive (${{ matrix.platform.msystem }})
-        path: |
+      - name: Setup MSYS2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: ${{ matrix.platform.msystem }}
+          install: >-
+            base-devel
+            ${{ matrix.platform.msys-env }}-gcc
+            ${{ matrix.platform.msys-env }}-glslang
+            ${{ matrix.platform.install_extra }}
+      - uses: actions/checkout@v6
+      - name: Build MinGW
+        run: |
+          set -eu
+          parallel="$(getconf _NPROCESSORS_ONLN)"
+          make -j"${parallel}" -C Quake -f ${{ matrix.platform.makefile }} all
+      - name: Upload vkQuake
+        uses: actions/upload-artifact@v7
+        with:
+          name: vkQuake archive (${{ matrix.platform.msystem }})
+          path: |
             Quake/*.exe
             Quake/*.dll
+
