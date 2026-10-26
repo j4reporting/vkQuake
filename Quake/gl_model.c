@@ -35,6 +35,7 @@ static qmodel_t *Mod_LoadModel (qmodel_t *mod, qboolean crash);
 static void		 Mod_FreeModelMemory (qmodel_t *mod);
 
 cvar_t external_ents = {"external_ents", "1", CVAR_ARCHIVE_GAME};
+cvar_t external_lit = {"external_lit", "1", CVAR_ARCHIVE_GAME};
 cvar_t external_vis = {"external_vis", "1", CVAR_ARCHIVE_GAME};
 
 // wad_external_textures = 1 enable loading of external WAD textures, 0 to forbid it for debug purposes.
@@ -152,6 +153,7 @@ Mod_Init
 void Mod_Init (void)
 {
 	Cvar_RegisterVariable (&external_vis);
+	Cvar_RegisterVariable (&external_lit);
 	Cvar_RegisterVariable (&external_ents);
 	Cvar_RegisterVariable (&wad_external_textures);
 	Cvar_RegisterVariable (&mdl_external_textures);
@@ -1387,45 +1389,48 @@ static void Mod_LoadLighting (qmodel_t *mod, byte *mod_base, lump_t *l)
 	unsigned int path_id;
 
 	mod->lightdata = NULL;
-	// LordHavoc: check for a .lit file
-	q_strlcpy (litfilename, mod->name, sizeof (litfilename));
-	COM_StripExtension (litfilename, litfilename, sizeof (litfilename));
-	q_strlcat (litfilename, ".lit", sizeof (litfilename));
-	data = (byte *)COM_LoadFile (litfilename, &path_id);
-	if (data)
+	if (external_lit.value)
 	{
-		// use lit file only from the same gamedir as the map
-		// itself or from a searchpath with higher priority.
-		if (path_id < mod->path_id)
+		// LordHavoc: check for a .lit file
+		q_strlcpy (litfilename, mod->name, sizeof (litfilename));
+		COM_StripExtension (litfilename, litfilename, sizeof (litfilename));
+		q_strlcat (litfilename, ".lit", sizeof (litfilename));
+		data = (byte *)COM_LoadFile (litfilename, &path_id);
+		if (data)
 		{
-			Con_DPrintf ("ignored %s from a gamedir with lower priority\n", litfilename);
-		}
-		else if (data[0] == 'Q' && data[1] == 'L' && data[2] == 'I' && data[3] == 'T')
-		{
-			i = ReadLongUnaligned (data + sizeof (int));
-			if (i == 1)
+			// use lit file only from the same gamedir as the map
+			// itself or from a searchpath with higher priority.
+			if (path_id < mod->path_id)
 			{
-				if (8 + l->filelen * 3 == com_filesize)
+				Con_DPrintf ("ignored %s from a gamedir with lower priority\n", litfilename);
+			}
+			else if (data[0] == 'Q' && data[1] == 'L' && data[2] == 'I' && data[3] == 'T')
+			{
+				i = ReadLongUnaligned (data + sizeof (int));
+				if (i == 1)
 				{
-					Con_DPrintf2 ("%s loaded\n", litfilename);
-					mod->lightdata = (byte *)Mem_AllocNonZero (l->filelen * 3);
-					memcpy (mod->lightdata, data + 8, l->filelen * 3);
-					Mem_Free (data);
-					return;
+					if (8 + l->filelen * 3 == com_filesize)
+					{
+						Con_DPrintf2 ("%s loaded\n", litfilename);
+						mod->lightdata = (byte *)Mem_AllocNonZero (l->filelen * 3);
+						memcpy (mod->lightdata, data + 8, l->filelen * 3);
+						Mem_Free (data);
+						return;
+					}
+					Con_Printf ("Outdated .lit file (%s should be %u bytes, not %lld)\n", litfilename, 8 + l->filelen * 3, com_filesize);
 				}
-				Con_Printf ("Outdated .lit file (%s should be %u bytes, not %lld)\n", litfilename, 8 + l->filelen * 3, com_filesize);
+				else
+				{
+					Con_Printf ("Unknown .lit file version (%d)\n", i);
+				}
 			}
 			else
 			{
-				Con_Printf ("Unknown .lit file version (%d)\n", i);
+				Con_Printf ("Corrupt .lit file (old version?), ignoring\n");
 			}
-		}
-		else
-		{
-			Con_Printf ("Corrupt .lit file (old version?), ignoring\n");
-		}
 
-		Mem_Free (data);
+			Mem_Free (data);
+		}
 	}
 	// LordHavoc: no .lit found, expand the white lighting data to color
 	if (!l->filelen)
