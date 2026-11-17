@@ -8,12 +8,14 @@ terms of the MIT license. A copy of the license can be found in the file
 // This file is included in `src/prim/prim.c`
 
 #include "mimalloc.h"
-#include "mimalloc/internal.h"
-#include "mimalloc/prim.h"
+#include "mimalloc/prim/prim.h"
+#include "mimalloc/prim/os.h"
+#include "mimalloc/util/libc.h"
+#include "mimalloc/heap/process.h"
 
 #include <stdio.h>   // fputs
 #include <stdlib.h>  // getenv
-#include <unistd.h>  // sbrk, sleep
+#include <unistd.h>  // sbrk, sleep, getentropy
 
 //---------------------------------------------
 // Initialize
@@ -25,6 +27,7 @@ void _mi_prim_mem_init( mi_os_mem_config_t* config ) {
   config->has_overcommit = false;
   config->has_partial_free = false;
   config->has_virtual_reserve = false;
+  config->has_reset = false;
 }
 
 //---------------------------------------------
@@ -53,7 +56,7 @@ int _mi_prim_free(void* addr, size_t size ) {
   }
 #elif defined(__wasi__)
   static void* mi_memory_grow( size_t size ) {
-    size_t base = (size > 0 ? __builtin_wasm_memory_grow(0,_mi_divide_up(size, _mi_os_page_size()))
+    size_t base = (size > 0 ? __builtin_wasm_memory_grow(0,mi_divide_up(size, _mi_os_page_size()))
                             : __builtin_wasm_memory_size(0));
     if (base == SIZE_MAX) return NULL;
     return (void*)(base * _mi_os_page_size());
@@ -88,8 +91,8 @@ static void* mi_prim_mem_grow(size_t size, size_t try_alignment) {
     {
       void* current = mi_memory_grow(0);  // get current size
       if (current != NULL) {
-        void* aligned_current = _mi_align_up_ptr(current, try_alignment);  // and align from there to minimize wasted space
-        alloc_size = _mi_align_up( ((uint8_t*)aligned_current - (uint8_t*)current) + size, _mi_os_page_size());
+        void* aligned_current = mi_align_up_ptr(current, try_alignment);  // and align from there to minimize wasted space
+        alloc_size = mi_align_up( ((uint8_t*)aligned_current - (uint8_t*)current) + size, _mi_os_page_size());
         base = mi_memory_grow(alloc_size);
       }
     }
@@ -97,7 +100,7 @@ static void* mi_prim_mem_grow(size_t size, size_t try_alignment) {
     pthread_mutex_unlock(&mi_theap_grow_mutex);
     #endif
     if (base != NULL) {
-      p = _mi_align_up_ptr(base, try_alignment);
+      p = mi_align_up_ptr(base, try_alignment);
       if ((uint8_t*)p + size > (uint8_t*)base + alloc_size) {
         // another thread used wasm_memory_grow/sbrk in-between and we do not have enough
         // space after alignment. Give up (and waste the space as we cannot shrink :-( )
@@ -113,7 +116,7 @@ static void* mi_prim_mem_grow(size_t size, size_t try_alignment) {
     return NULL;
   }
   */
-  mi_assert_internal( p == NULL || try_alignment == 0 || (uintptr_t)p % try_alignment == 0 );
+  mi_assert_internal( p == NULL || try_alignment == 0 || mi_addr(p) % try_alignment == 0 );
   return p;
 }
 
@@ -153,7 +156,12 @@ int _mi_prim_reuse(void* addr, size_t size) {
   return 0;
 }
 
-int _mi_prim_protect(void* addr, size_t size, bool protect) {
+int _mi_prim_guard(void* addr, size_t size, bool set_guard, bool is_committed) {
+  MI_UNUSED(addr); MI_UNUSED(size); MI_UNUSED(set_guard); MI_UNUSED(is_committed);
+  return 0;
+}
+
+int _mi_prim_protect(void* addr, size_t size, mi_protect_t protect) {
   MI_UNUSED(addr); MI_UNUSED(size); MI_UNUSED(protect);
   return 0;
 }
@@ -257,9 +265,14 @@ int _mi_prim_getenv(const char* name, char* result, size_t result_size) {
     buf[len] = 0;
     s = getenv(buf);
   }
-  if (s == NULL || _mi_strnlen(s,result_size) >= result_size)  return 0; // not found
-  _mi_strlcpy(result, s, result_size);
+  if (s == NULL) return 0; // not found
+  if (!_mi_strlcpy(result, s, result_size)) return -2;  // too long
   return 1; // found
+}
+
+bool _mi_prim_env_visit(mi_env_visit_fun* visit, void* arg) {
+  MI_UNUSED(visit); MI_UNUSED(arg);
+  return false;  // cannot iterate the environment
 }
 
 
@@ -268,7 +281,7 @@ int _mi_prim_getenv(const char* name, char* result, size_t result_size) {
 //----------------------------------------------------------------
 
 bool _mi_prim_random_buf(void* buf, size_t buf_len) {
-  return false;
+  return (getentropy(buf, buf_len) == 0);  // uses `random_get` (and buf_len <= 256)
 }
 
 
@@ -288,10 +301,18 @@ void _mi_prim_thread_associate_default_theap(mi_theap_t* theap) {
   MI_UNUSED(theap);
 }
 
+void _mi_prim_thread_init(void) {
+  // nothing
+}
+
 bool _mi_prim_thread_is_in_threadpool(void) {
   return false;
 }
 
 void _mi_prim_thread_yield(void) {
   sleep(0);
+}
+
+bool _mi_prim_process_is_killed(void) {
+  return false;
 }
